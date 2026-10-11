@@ -164,8 +164,10 @@ without resetting other controls. CLI: `--whiteness-correction`.
 Double-click `run-installed-strip.cmd` or `run-wow-lighting.cmd`: each starts
 the GUI and finishes without keeping a console open. Both launchers restore the
 last selected sampling profile and use the same fallback control settings.
-Close Backlight before rebuilding. Updates replace `backlight.exe` directly;
-the launchers simply open that executable.
+When an update is waiting as `backlight-next.exe`, close Backlight and open a
+launcher to replace `backlight.exe`. Launchers pass no custom flags. The original
+installation can be restored from `backlight-installed-strip.ini` beside the EXE;
+saved hardware Setup takes priority over that fallback.
 For terminal diagnostics run the executable directly with `--no-preview`,
 `--debug-rgb`, `--list-monitors`, `--help`, or `--updates`; those modes attach
 to the invoking console. Fatal GUI errors appear in a message box.

@@ -132,6 +132,19 @@ pub fn save(path: &Path, h: &Hardware) -> Result<()> {
     std::fs::rename(tmp, path)?;
     Ok(())
 }
+/// Saved fallback for the original installation; full Setup takes priority.
+pub fn load_installed(path: &Path) -> Result<Option<SocketAddr>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(
+            text.trim()
+                .strip_prefix("address=")
+                .context("Invalid installed strip settings")?
+                .parse()?,
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
 pub fn load(path: &Path) -> Result<Option<Hardware>> {
     let s = match std::fs::read_to_string(path) {
         Ok(s) => s,

@@ -1,6 +1,7 @@
 /target
 backlight-settings.ini
 backlight-hardware.ini
+backlight-installed-strip.ini
 backlight-sampling*.ini
 backlight-profile-*.ini
 backlight-active-profile.txt

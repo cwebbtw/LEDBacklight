@@ -217,7 +217,10 @@ impl Picker {
             if let Some(name) = self.names.get(self.index) {
                 text(buffer, 55, 128, &self.label(name), 0xffffff);
             }
-            text(buffer, 715, 128, "V", 0x44cfff);
+            for row in 0..8 {
+                let y = if self.dropdown { 135 - row } else { 128 + row };
+                buffer[y * 800 + 715 + row..y * 800 + 731 - row].fill(0x44cfff);
+            }
             text(buffer, 45, 259, "NEW PROFILE", 0x44cfff);
         }
         text(
@@ -257,7 +260,7 @@ impl Picker {
     }
     fn label(&self, name: &str) -> String {
         if name.eq_ignore_ascii_case(&self.active) {
-            format!("{} (CURRENT)", name.to_uppercase())
+            format!("{} (current)", name.to_uppercase())
         } else {
             name.to_uppercase()
         }
@@ -322,7 +325,7 @@ mod tests {
             p.input(None, false, &[]);
         }
         click(&mut picker, 500.0, 375.0);
-        assert_eq!(picker.label("WoW"), "WOW (CURRENT)");
+        assert_eq!(picker.label("WoW"), "WOW (current)");
         click(&mut picker, 500.0, 130.0);
         click(&mut picker, 100.0, 160.0);
         assert_eq!(picker.index, 0);

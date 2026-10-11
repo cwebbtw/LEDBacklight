@@ -146,6 +146,14 @@ fn run() -> Result<()> {
     let mut config = Config::from_arg_matches(&matches)?;
     let explicit =
         |name| matches.value_source(name) == Some(clap::parser::ValueSource::CommandLine);
+    if !config.no_saved_settings
+        && let Some(address) = setup::load_installed(
+            &std::env::current_exe()?.with_file_name("backlight-installed-strip.ini"),
+        )?
+    {
+        config.installed_strip = true;
+        config.ddp.get_or_insert(address);
+    }
     // Launcher fallback values; explicit options and saved settings can override them.
     if config.installed_strip {
         if !explicit("brightness") {

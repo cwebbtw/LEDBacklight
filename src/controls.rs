@@ -173,6 +173,14 @@ pub(crate) fn text(buffer: &mut [u32], x: usize, y: usize, value: &str, colour: 
             '.' => [0, 0, 0, 0, 0, 6, 6],
             ':' => [0, 6, 6, 0, 6, 6, 0],
             '-' => [0, 0, 0, 31, 0, 0, 0],
+            '(' => [2, 4, 8, 8, 8, 4, 2],
+            ')' => [8, 4, 2, 2, 2, 4, 8],
+            'c' => [0, 0, 14, 16, 16, 17, 14],
+            'u' => [0, 0, 17, 17, 17, 19, 13],
+            'r' => [0, 0, 22, 25, 16, 16, 16],
+            'e' => [0, 0, 14, 17, 31, 16, 14],
+            'n' => [0, 0, 22, 25, 17, 17, 17],
+            't' => [8, 8, 30, 8, 8, 9, 6],
             _ => [0; 7],
         };
         for (yy, bits) in rows.iter().enumerate() {
@@ -196,6 +204,18 @@ pub(crate) fn text(buffer: &mut [u32], x: usize, y: usize, value: &str, colour: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn current_marker_renders_every_character_including_parentheses() {
+        let mut buffer = vec![0; 800 * 400];
+        text(&mut buffer, 0, 0, "(current)", 0xffffff);
+        for character in 0..9 {
+            assert!((0..14).any(|y| {
+                buffer[y * 800 + character * 12..y * 800 + character * 12 + 10]
+                    .iter()
+                    .any(|&pixel| pixel != 0)
+            }));
+        }
+    }
     #[test]
     fn whiteness_checkbox_toggles_independently_once_per_press() {
         let mut c = Controls::default();
