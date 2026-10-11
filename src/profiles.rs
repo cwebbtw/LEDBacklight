@@ -267,17 +267,15 @@ impl Picker {
                 "STARTS WITH CLEAN DEFAULT SAMPLING",
                 0xc7d2e2,
             );
-        } else {
-            if self.deleting {
-                text(buffer, 45, 105, "DELETE THIS PROFILE?", 0xffbb44);
-                if self
-                    .names
-                    .get(self.index)
-                    .is_some_and(|name| name.eq_ignore_ascii_case(&self.active))
-                {
-                    text(buffer, 45, 205, "THIS WILL SWITCH TO DEFAULT", 0xc7d2e2);
+        } else if self.deleting {
+            text(buffer, 45, 115, "DELETE THIS PROFILE?", 0xffbb44);
+            if let Some(name) = self.names.get(self.index) {
+                text(buffer, 45, 165, &self.label(name), 0xffffff);
+                if name.eq_ignore_ascii_case(&self.active) {
+                    text(buffer, 45, 225, "THIS WILL SWITCH TO DEFAULT", 0xc7d2e2);
                 }
             }
+        } else {
             for y in 115..151 {
                 buffer[y * 800 + 45..y * 800 + 750].fill(0x252d35);
             }
