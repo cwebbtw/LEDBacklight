@@ -176,7 +176,7 @@ impl Picker {
             {
                 self.dropdown = true;
                 self.list_start = self.index.saturating_sub(5);
-            } else if !self.creating && (245.0..=278.0).contains(&y) {
+            } else if !self.creating && (259.0..273.0).contains(&y) && (45.0..175.0).contains(&x) {
                 self.creating = true;
                 self.name.clear();
                 self.message.clear();
@@ -332,6 +332,25 @@ fn character(key: Key) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn new_profile_ignores_blank_space_beside_its_label() {
+        let mut picker = Picker {
+            open: true,
+            ..Default::default()
+        };
+        for point in [
+            (300.0, 265.0),
+            (40.0, 265.0),
+            (100.0, 250.0),
+            (100.0, 275.0),
+        ] {
+            picker.input(Some(point), true, &[]);
+            picker.input(None, false, &[]);
+            assert!(!picker.creating);
+        }
+        picker.input(Some((100.0, 265.0)), true, &[]);
+        assert!(picker.creating);
+    }
     #[test]
     fn dropdown_marks_current_and_applies_only_after_confirmation() {
         let mut picker = Picker {
