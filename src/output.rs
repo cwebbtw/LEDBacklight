@@ -156,7 +156,7 @@ impl Preview {
             self.controls
                 .draw(&mut self.buffer, settings, effective_brightness);
         }
-        if !self.setup.open {
+        if !self.setup.open && !self.profiles.open {
             self.editor.draw(&mut self.buffer);
         }
         if !self.editor.open && !self.profiles.open {
