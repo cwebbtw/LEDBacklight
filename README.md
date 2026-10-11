@@ -305,9 +305,11 @@ and [DuplicateOutput](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_
 ### Sampling profiles
 
 Open **Edit sampling**, then click **Profile** at the bottom right to select a named layout.
-**Default** begins with the same clean edge sections as Reset, with no exclusions
-or individual reading overrides. **New Profile** copies the current layout;
-type a name and click Create, then use Edit sampling to configure its boxes.
+Select a profile from the dropdown; the active profile is marked **(current)**.
+Click **Apply** to switch. **Default** begins with the same clean edge sections as
+Reset, with no exclusions or individual reading overrides. **New Profile** always
+starts with clean default sampling; type a name and click Create, then configure
+its boxes in Edit sampling. For long dropdown lists, use Up/Down or Home/End.
 Switching profiles applies immediately and remembers the selection for the next
 launch, including when opening the EXE directly. Brightness controls and hardware
 setup remain shared across profiles.

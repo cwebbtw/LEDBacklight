@@ -1,5 +1,12 @@
 # Validation performed
 
+## Profile dropdown — 11 October 2026
+
+Replaced Previous/Next with a dropdown, marked the active profile (current),
+renamed Use Profile to Apply and made new layouts start with clean default
+sampling. Passed 92 regular tests, formatting and all-target Clippy. Dropdown
+checks cover selection without immediate application and long-list navigation.
+
 ## Generic sampling profiles — 11 October 2026
 
 Added a main-window profile selector and creation by copying the current layout.

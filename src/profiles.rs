@@ -94,6 +94,8 @@ pub struct Picker {
     creating: bool,
     name: String,
     was_down: bool,
+    dropdown: bool,
+    list_start: usize,
 }
 impl Picker {
     pub fn input(&mut self, mouse: Option<(f32, f32)>, down: bool, keys: &[Key]) -> bool {
@@ -107,6 +109,7 @@ impl Picker {
             {
                 self.open = true;
                 self.creating = false;
+                self.dropdown = false;
                 self.index = self
                     .names
                     .iter()
@@ -127,7 +130,35 @@ impl Picker {
                 }
             }
         }
+        if self.dropdown && !self.names.is_empty() {
+            for key in keys {
+                match key {
+                    Key::Up => self.index = self.index.saturating_sub(1),
+                    Key::Down => self.index = (self.index + 1).min(self.names.len() - 1),
+                    Key::Home => self.index = 0,
+                    Key::End => self.index = self.names.len() - 1,
+                    Key::Enter => self.dropdown = false,
+                    _ => (),
+                }
+            }
+            if self.index < self.list_start {
+                self.list_start = self.index;
+            }
+            if self.index >= self.list_start + 6 {
+                self.list_start = self.index - 5;
+            }
+        }
         if fresh && let Some((x, y)) = mouse {
+            if self.dropdown {
+                if (45.0..=750.0).contains(&x) && (154.0..298.0).contains(&y) {
+                    let index = self.list_start + ((y - 154.0) / 24.0) as usize;
+                    if index < self.names.len() {
+                        self.index = index;
+                    }
+                }
+                self.dropdown = false;
+                return true;
+            }
             if (323.0..=349.0).contains(&y) {
                 if (45.0..=200.0).contains(&x) {
                     self.open = false;
@@ -138,12 +169,10 @@ impl Picker {
                         self.request = Some(Request::Select(name.clone()));
                     }
                 }
-            } else if !self.creating && (175.0..=203.0).contains(&y) && !self.names.is_empty() {
-                if x < 350.0 {
-                    self.index = (self.index + self.names.len() - 1) % self.names.len();
-                } else {
-                    self.index = (self.index + 1) % self.names.len();
-                }
+            } else if !self.creating && (115.0..=150.0).contains(&y) && (45.0..=750.0).contains(&x)
+            {
+                self.dropdown = true;
+                self.list_start = self.index.saturating_sub(5);
             } else if !self.creating && (245.0..=278.0).contains(&y) {
                 self.creating = true;
                 self.name.clear();
@@ -178,15 +207,17 @@ impl Picker {
                 buffer,
                 45,
                 205,
-                "COPIES YOUR CURRENT SAMPLING BOXES",
+                "STARTS WITH CLEAN DEFAULT SAMPLING",
                 0xc7d2e2,
             );
         } else {
-            if let Some(name) = self.names.get(self.index) {
-                text(buffer, 45, 130, &name.to_uppercase(), 0xffffff);
+            for y in 115..151 {
+                buffer[y * 800 + 45..y * 800 + 750].fill(0x252d35);
             }
-            text(buffer, 45, 185, "PREVIOUS", 0x44cfff);
-            text(buffer, 575, 185, "NEXT", 0x44cfff);
+            if let Some(name) = self.names.get(self.index) {
+                text(buffer, 55, 128, &self.label(name), 0xffffff);
+            }
+            text(buffer, 715, 128, "V", 0x44cfff);
             text(buffer, 45, 259, "NEW PROFILE", 0x44cfff);
         }
         text(
@@ -206,13 +237,30 @@ impl Picker {
             buffer,
             580,
             333,
-            if self.creating {
-                "CREATE"
-            } else {
-                "USE PROFILE"
-            },
+            if self.creating { "CREATE" } else { "APPLY" },
             0x44cfff,
         );
+        if self.dropdown {
+            for (row, name) in self.names.iter().skip(self.list_start).take(6).enumerate() {
+                let top = 154 + row * 24;
+                let colour = if self.index == self.list_start + row {
+                    0x384857
+                } else {
+                    0x252d35
+                };
+                for y in top..top + 24 {
+                    buffer[y * 800 + 45..y * 800 + 750].fill(colour);
+                }
+                text(buffer, 55, top + 5, &self.label(name), 0xffffff);
+            }
+        }
+    }
+    fn label(&self, name: &str) -> String {
+        if name.eq_ignore_ascii_case(&self.active) {
+            format!("{} (CURRENT)", name.to_uppercase())
+        } else {
+            name.to_uppercase()
+        }
     }
 }
 fn character(key: Key) -> Option<char> {
@@ -262,6 +310,42 @@ fn character(key: Key) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dropdown_marks_current_and_applies_only_after_confirmation() {
+        let mut picker = Picker {
+            active: "WoW".into(),
+            names: vec!["Default".into(), "WoW".into()],
+            ..Default::default()
+        };
+        fn click(p: &mut Picker, x: f32, y: f32) {
+            p.input(Some((x, y)), true, &[]);
+            p.input(None, false, &[]);
+        }
+        click(&mut picker, 500.0, 375.0);
+        assert_eq!(picker.label("WoW"), "WOW (CURRENT)");
+        click(&mut picker, 500.0, 130.0);
+        click(&mut picker, 100.0, 160.0);
+        assert_eq!(picker.index, 0);
+        assert_eq!(picker.active, "WoW");
+        assert!(picker.request.is_none());
+        click(&mut picker, 600.0, 333.0);
+        assert!(matches!(picker.request, Some(Request::Select(ref name)) if name == "Default"));
+    }
+    #[test]
+    fn dropdown_can_reach_profiles_beyond_visible_rows() {
+        let mut picker = Picker {
+            open: true,
+            dropdown: true,
+            names: (0..15).map(|n| format!("Profile {n}")).collect(),
+            ..Default::default()
+        };
+        picker.input(None, false, &[Key::End]);
+        assert_eq!(picker.index, 14);
+        assert_eq!(picker.list_start, 9);
+        picker.input(Some((100.0, 160.0)), true, &[]);
+        assert_eq!(picker.index, 9);
+        assert!(!picker.dropdown);
+    }
     #[test]
     fn migration_preserves_all_geometry_and_only_runs_once() {
         let dir = std::env::temp_dir().join(format!("backlight-profiles-{}", std::process::id()));

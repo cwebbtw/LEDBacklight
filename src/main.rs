@@ -484,15 +484,13 @@ fn run() -> Result<()> {
                             !name.eq_ignore_ascii_case("default") && !path.exists(),
                             "That profile already exists"
                         );
-                        let profile = custom_layout.clone().unwrap_or_else(|| {
-                            sampling::Profile::preset(
-                                initial_bounds.width,
-                                initial_bounds.height,
-                                config.depth,
-                                0,
-                                false,
-                            )
-                        });
+                        let profile = sampling::Profile::preset(
+                            initial_bounds.width,
+                            initial_bounds.height,
+                            config.depth,
+                            0,
+                            false,
+                        );
                         sampling::save(&path, &profile)?;
                     }
                     let profile = sampling::load(&path)?;
