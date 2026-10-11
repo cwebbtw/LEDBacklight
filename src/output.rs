@@ -96,7 +96,11 @@ impl Preview {
             return;
         }
         let was_setup = self.setup.open;
-        self.setup.input(mouse, down, &keys);
+        if !self.editor.open && !self.profiles.open {
+            self.setup.input(mouse, down, &keys);
+        } else {
+            self.setup.input(None, false, &[]);
+        }
         if was_setup || self.setup.open {
             return;
         }
@@ -155,7 +159,9 @@ impl Preview {
         if !self.setup.open {
             self.editor.draw(&mut self.buffer);
         }
-        self.setup.draw(&mut self.buffer);
+        if !self.editor.open && !self.profiles.open {
+            self.setup.draw(&mut self.buffer);
+        }
         if !self.setup.open && !self.editor.open {
             self.profiles.draw(&mut self.buffer);
         }
