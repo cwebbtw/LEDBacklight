@@ -1,5 +1,16 @@
 # Validation performed
 
+## Generic sampling profiles — 11 October 2026
+
+Added a main-window profile selector and creation by copying the current layout.
+Profile selection applies live and persists across EXE/launcher starts. Default
+uses clean edge sampling; the existing WoW file migrates once, retaining all
+bands, exclusions and individual overrides. The legacy file remains untouched.
+Launchers no longer pass --wow; the hidden compatibility flag selects WoW only.
+Passed 90 regular tests, formatting, all-target Clippy and release build. Migration
+tests cover exact geometry preservation, active selection, repeat migration and
+profile filename validation. No live GUI, WoW process access or lighting tests.
+
 ## Setup direction rotation — 11 October 2026
 
 The direction page now offers Start/Stop rotation with a repeating seven-second

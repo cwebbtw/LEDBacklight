@@ -7,4 +7,4 @@ if exist "%~dp0target\release\backlight-next.exe" (
         exit /b 1
     )
 )
-start "" "%~dp0target\release\backlight.exe" --installed-strip --ddp 192.168.4.23:4048 --wow %*
+start "" "%~dp0target\release\backlight.exe" --installed-strip --ddp 192.168.4.23:4048 %*

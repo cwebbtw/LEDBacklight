@@ -15,6 +15,7 @@ pub struct Preview {
     controls: Controls,
     pub editor: crate::editor::Editor,
     pub setup: crate::setup::Wizard,
+    pub profiles: crate::profiles::Picker,
 }
 impl Preview {
     pub fn new(counts: [usize; 4], raw: bool, setup: crate::setup::Wizard) -> Result<Self> {
@@ -38,6 +39,7 @@ impl Preview {
             controls: Controls::default(),
             editor: crate::editor::Editor::new(counts),
             setup,
+            profiles: crate::profiles::Picker::default(),
         })
     }
     pub fn open(&self) -> bool {
@@ -90,6 +92,9 @@ impl Preview {
         } else {
             vec![]
         };
+        if !self.setup.open && !self.editor.open && self.profiles.input(mouse, down, &keys) {
+            return;
+        }
         let was_setup = self.setup.open;
         self.setup.input(mouse, down, &keys);
         if was_setup || self.setup.open {
@@ -143,7 +148,7 @@ impl Preview {
         } else {
             render_glow(&mut self.buffer, colours, self.counts);
         }
-        if !self.editor.open && !self.setup.open {
+        if !self.editor.open && !self.setup.open && !self.profiles.open {
             self.controls
                 .draw(&mut self.buffer, settings, effective_brightness);
         }
@@ -151,6 +156,9 @@ impl Preview {
             self.editor.draw(&mut self.buffer);
         }
         self.setup.draw(&mut self.buffer);
+        if !self.setup.open && !self.editor.open {
+            self.profiles.draw(&mut self.buffer);
+        }
         let (w, h) = self.window.get_size();
         if self.editor.open && !self.setup.open && w > 0 && h > 0 {
             self.native_buffer.resize(w * h, 0);

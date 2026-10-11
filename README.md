@@ -65,9 +65,8 @@ a bottom reading with no clear pixels above it is blocked rather than moved side
 they cannot recover scenery hidden behind the game UI. If a reading cannot fit,
 it shrinks until it fits; an entirely excluded picture produces black output.
 **Reset** clears all exclusions and individual-part overrides, restores the
-standard edge bands, and removes the WoW bottom inset. It saves that clean layout,
-so reopening does not bring the built-in exclusions back. The initial WoW preset
-(before configuring or resetting it) excludes the top buff row and right action bars.
+standard edge bands, and removes any bottom inset. It saves that clean layout
+within the active profile.
 
 Changes apply live and save when you release the mouse, or close the application.
 While editing sampling with Backlight focused, **Ctrl+Z** undoes one complete
@@ -75,8 +74,7 @@ action: a drag, resize, exclusion addition/deletion, part deletion, or Reset.
 Up to 100 actions are remembered for this session; undo also applies live and
 saves the restored layout. Selection clicks do not create undo entries. There
 is no redo, and undo history clears when the application closes.
-WoW and desktop layouts save separately beside the executable as
-`backlight-sampling-wow.ini` and `backlight-sampling-desktop.ini`. Coordinates
+Named layouts save beside the executable as `backlight-profile-<name>.ini`. Coordinates
 scale with the active picture when the resolution or black bars change. Saved
 custom bands replace preset/CLI sampling positions; Reset saves clean edge bands. LED numbering
 and strip ordering stay unchanged. `--no-saved-settings` also ignores these layouts.
@@ -104,7 +102,7 @@ you choose a low LED update rate. Actual achieved LED rate still depends on load
 Brightness, adaptive mode, whiteness correction, update rate and smoothing are saved automatically
 after a 300 ms pause in adjustments and on close. Reopening restores these
 controls from `backlight-settings.ini` beside the executable. Both launchers
-share the saved controls; their WoW/capture/receiver options remain separate.
+share the saved controls and last selected sampling profile.
 Explicit CLI control values override saved ones. Use `--no-saved-settings` to
 ignore saved controls without changing the file. Headless and bounded diagnostic
 runs do not load or save preferences. Missing settings use the defaults below;
@@ -113,7 +111,7 @@ invalid files fall back to defaults and report a warning in the window title.
 Tick **Adaptive brightness** to disable the manual brightness slider and adjust
 the global scale from the current edge samples: dark scenes target 0.15, bright
 scenes target up to 2.0, with a smooth transition between them. The scale uses
-the existing crop and WoW UI avoidance samples, rather than identifying game
+the selected profile's sampling boxes and exclusions, rather than identifying game
 zones by name. It adapts with its own 600 ms time constant even with colour
 smoothing disabled. Unticking restores your manual value. Enable it on startup
 with `--adaptive-brightness`. Scales above 1.0 boost dim channels but can clip
@@ -132,8 +130,8 @@ boosting fades out in bright scenes. The smoothing slider now fades the final
 LED drive after local boosts, gamma, clipping and whiteness correction, including
 immediate response at 0 ms. This also smooths manual brightness changes and
 correction toggles, rather than letting later processing bypass the fade. Highlights stay local
-instead of spreading through neighbour blending. The existing crop and WoW UI
-avoidance apply to highlight sampling too. Manual mode keeps ordinary averaging.
+instead of spreading through neighbour blending. The selected profile's boxes and
+exclusions apply to highlight sampling too. Manual mode keeps ordinary averaging.
 This is a spatial filter, not text recognition: large thick labels may still
 qualify, and very small/thin lights can be suppressed. It detects bright pixel
 groups within the sampling strips, not game objects;
@@ -164,9 +162,8 @@ The checkbox is off initially and is remembered. Existing saved settings migrate
 without resetting other controls. CLI: `--whiteness-correction`.
 
 Double-click `run-installed-strip.cmd` or `run-wow-lighting.cmd`: each starts
-the GUI and finishes without keeping a console open. The WoW launcher preserves
-fallback values of brightness 0.75, 100 Hz, and 0 ms smoothing when there are
-no saved settings; the normal launcher falls back to 0.35, 60 Hz, and 0 ms.
+the GUI and finishes without keeping a console open. Both launchers restore the
+last selected sampling profile and use the same fallback control settings.
 If an update was staged while the application was running, close Backlight
 yourself and reopen the launcher to install it. The launcher replaces a staged
 `backlight-next.exe` before starting; if the old executable is still locked it
@@ -307,38 +304,25 @@ and [DuplicateOutput](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_
 
 ## Installed 140-LED monitor strip
 
-### WoW action-bar sampling
+### Sampling profiles
 
-Close the normal lighting instance and use `run-wow-lighting.cmd` while playing
-WoW. This launches the updated binary in `target/release` with `--wow`,
-your installed strip mapping and DDP settings. The normal launcher is unchanged.
-The preset skips the bottom sixth of the active picture, then samples the usual
-depth above it: at 1440 pixels tall, skip 240 and sample the next 120 pixels.
-Only bottom sampling moves; region counts, left/right/top sampling and physical
-strip order stay the same. Corner colours still use adjacent edge averages.
+Click **Profile** between Edit sampling and Setup to select a named layout.
+**Default** begins with the same clean edge sections as Reset, with no exclusions
+or individual reading overrides. **New Profile** copies the current layout;
+type a name and click Create, then use Edit sampling to configure its boxes.
+Switching profiles applies immediately and remembers the selection for the next
+launch, including when opening the EXE directly. Brightness controls and hardware
+setup remain shared across profiles.
 
-The inset is relative to the picture after black-bar cropping, not the raw
-monitor boundary. This is an explicit preset, not automatic WoW/action-bar detection;
-the skipped height scales with picture height. Adjust for your UI size with
-`--bottom-inset 200` (physical pixels); `--bottom-inset 0` overrides the preset
-and restores edge sampling. Depth clamps if needed, but an inset that removes
-the entire picture height is rejected. The title reports the active bottom inset.
+An existing `backlight-sampling-wow.ini` is copied once into the custom **WoW**
+profile without changing its boxes, exclusions or individual readings. The old
+file is retained. Existing installations initially select WoW so their current
+sampling continues; new installations start with Default. The previous desktop
+layout is also retained as a file but is not used for Default.
 
-WoW mode also avoids normalised UI zones matching the supplied layout: minimap
-and objectives at the right, chat at bottom-left, central action bars, upper-left
-damage/issue panel and the player frame. A sample intersecting one of these zones
-moves to the nearest clear rectangle of the same dimensions; other samples stay
-unchanged. This preserves the LED ordering but approximates hidden scenery using
-nearby visible pixels. It does not recover the pixels behind widgets or detect
-individual widgets automatically. The same zones apply when the UI is hidden;
-this keeps sampling positions consistent across UI toggles. Custom UI placement
-requires updating `src/ui.rs`. `--no-wow-ui` disables those zones while keeping
-the bottom inset. If a very large sample cannot fit outside the zones it remains
-in its original valid position. The title reports the number of `UI shifts`.
-
-```powershell
-.\run-wow-lighting.cmd --bottom-inset 200
-```
+CLI: `--profile "WoW"` or `--profile "Default"`. The old `--wow` flag remains
+only as a compatibility alias selecting WoW; it no longer applies special masks
+or a bottom inset. The launchers no longer pass it. No game process is inspected.
 
 ### Check physical positions
 

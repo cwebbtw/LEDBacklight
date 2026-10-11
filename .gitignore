@@ -2,4 +2,6 @@
 backlight-settings.ini
 backlight-hardware.ini
 backlight-sampling*.ini
+backlight-profile-*.ini
+backlight-active-profile.txt
 

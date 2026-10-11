@@ -10,6 +10,7 @@ mod editor;
 mod layout;
 mod output;
 mod preferences;
+mod profiles;
 mod sampling;
 mod setup;
 mod strip;
@@ -46,13 +47,13 @@ struct Config {
     left: usize,
     #[arg(long, default_value_t = 120)]
     depth: usize,
-    /// WoW preset: skip the bottom sixth of the active picture to avoid action bars.
-    #[arg(long)]
+    /// Compatibility alias for --profile WoW.
+    #[arg(long, hide = true)]
     wow: bool,
-    /// Keep the bottom inset but disable the WoW minimap/chat/UI avoidance zones.
+    /// Select a saved sampling profile (otherwise restore the last selected profile).
     #[arg(long)]
-    no_wow_ui: bool,
-    /// Physical pixels to skip below bottom samples; overrides the WoW preset.
+    profile: Option<String>,
+    /// Physical pixels to skip below bottom samples when no saved layout is selected.
     #[arg(long)]
     bottom_inset: Option<usize>,
     /// Neighbour blending strength, 0..1.
@@ -148,10 +149,7 @@ fn run() -> Result<()> {
     // Launcher fallback values; explicit options and saved settings can override them.
     if config.installed_strip {
         if !explicit("brightness") {
-            config.brightness = if config.wow { 0.75 } else { 0.35 };
-        }
-        if !explicit("fps") && config.wow {
-            config.fps = 100;
+            config.brightness = 0.35;
         }
         if !explicit("smoothing_ms") {
             config.smoothing_ms = 0;
@@ -224,7 +222,8 @@ fn run() -> Result<()> {
     let inset_for = |height: usize| {
         config
             .bottom_inset
-            .unwrap_or(if config.wow { height / 6 } else { 0 })
+            .unwrap_or(0)
+            .min(height.saturating_sub(1))
     };
     layout::sampling_regions(
         manual
@@ -321,11 +320,21 @@ fn run() -> Result<()> {
             None
         };
     let mut adaptive = adaptive::Adaptive::new(settings.brightness);
-    let layout_path = std::env::current_exe()?.with_file_name(if config.wow {
-        "backlight-sampling-wow.ini"
+    let executable = std::env::current_exe()?;
+    let profile_dir = executable.parent().unwrap();
+    if !config.no_saved_settings {
+        profiles::migrate(profile_dir)?;
+    }
+    let requested = config
+        .profile
+        .as_deref()
+        .or(if config.wow { Some("WoW") } else { None });
+    let mut active_profile = if config.no_saved_settings {
+        "Default".to_string()
     } else {
-        "backlight-sampling-desktop.ini"
-    });
+        profiles::selected(profile_dir, requested)?
+    };
+    let mut layout_path = profiles::path(profile_dir, &active_profile)?;
     let mut custom_layout = if !config.no_saved_settings {
         match sampling::load(&layout_path) {
             Ok(p) => p,
@@ -337,8 +346,13 @@ fn run() -> Result<()> {
     } else {
         None
     };
+    if !config.no_saved_settings {
+        profiles::remember(profile_dir, &active_profile)?;
+    }
     if let Some(p) = &mut preview {
         p.editor.profile = custom_layout.clone();
+        p.profiles.active = active_profile.clone();
+        p.profiles.names = profiles::names(profile_dir)?;
     }
     let mut effective_brightness = settings.brightness;
     let mut next_update = Instant::now();
@@ -451,6 +465,57 @@ fn run() -> Result<()> {
                     Err(e) => {
                         settings_warning = format!(" — cannot save layout: {e}");
                     }
+                }
+            }
+            if let Some(request) = p.profiles.request.take() {
+                let result = (|| -> Result<(String, Option<sampling::Profile>)> {
+                    ensure!(
+                        !config.no_saved_settings,
+                        "Restart without --no-saved-settings to use profiles"
+                    );
+                    sampling::save_optional(&layout_path, custom_layout.as_ref())?;
+                    let (name, create) = match request {
+                        profiles::Request::Select(name) => (name, false),
+                        profiles::Request::Create(name) => (name, true),
+                    };
+                    let path = profiles::path(profile_dir, &name)?;
+                    if create {
+                        ensure!(
+                            !name.eq_ignore_ascii_case("default") && !path.exists(),
+                            "That profile already exists"
+                        );
+                        let profile = custom_layout.clone().unwrap_or_else(|| {
+                            sampling::Profile::preset(
+                                initial_bounds.width,
+                                initial_bounds.height,
+                                config.depth,
+                                0,
+                                false,
+                            )
+                        });
+                        sampling::save(&path, &profile)?;
+                    }
+                    let profile = sampling::load(&path)?;
+                    ensure!(
+                        name.eq_ignore_ascii_case("default") || profile.is_some(),
+                        "Profile does not exist"
+                    );
+                    profiles::remember(profile_dir, &name)?;
+                    Ok((name, profile))
+                })();
+                match result {
+                    Ok((name, profile)) => {
+                        active_profile = name;
+                        layout_path = profiles::path(profile_dir, &active_profile)?;
+                        custom_layout = profile;
+                        p.reconfigure(counts, custom_layout.clone());
+                        p.profiles.active = active_profile.clone();
+                        p.profiles.names = profiles::names(profile_dir)?;
+                        p.profiles.open = false;
+                        sampling_key = None;
+                        next_update = start;
+                    }
+                    Err(e) => p.profiles.message = e.to_string(),
                 }
             }
             if settings != old_settings {
@@ -569,7 +634,7 @@ fn run() -> Result<()> {
                         bounds.height,
                         config.depth,
                         bottom_inset,
-                        config.wow && !config.no_wow_ui,
+                        false,
                     ));
                 }
                 sample_regions = layout::sampling_regions(
@@ -579,10 +644,7 @@ fn run() -> Result<()> {
                     config.depth,
                     bottom_inset,
                 )?;
-                let mut zones = runtime_zones;
-                if config.wow && !config.no_wow_ui {
-                    zones.extend(ui::wow_zones(bounds.width, bounds.height));
-                }
+                let zones = runtime_zones;
                 ui_shifted = ui::avoid_edges(
                     &mut sample_regions,
                     counts,
