@@ -50,7 +50,15 @@ pub fn remember(dir: &Path, name: &str) -> Result<()> {
 }
 /// Copy the existing layout once; never replace a subsequently edited profile.
 pub fn migrate(dir: &Path) -> Result<bool> {
+    let marker = dir.join("backlight-profile-migration.txt");
+    if marker.exists() {
+        return Ok(false);
+    }
     let wow = path(dir, "WoW")?;
+    if wow.exists() {
+        std::fs::write(marker, "complete")?;
+        return Ok(false);
+    }
     if !wow.exists()
         && let Some(p) = sampling::load(&dir.join("backlight-sampling-wow.ini"))?
     {
@@ -58,6 +66,7 @@ pub fn migrate(dir: &Path) -> Result<bool> {
         if !dir.join("backlight-active-profile.txt").exists() {
             remember(dir, "WoW")?;
         }
+        std::fs::write(marker, "complete")?;
         return Ok(true);
     }
     Ok(false)
@@ -82,6 +91,7 @@ pub fn selected(dir: &Path, requested: Option<&str>) -> Result<String> {
 pub enum Request {
     Select(String),
     Create(String),
+    Delete(String),
 }
 #[derive(Default)]
 pub struct Picker {
@@ -92,6 +102,7 @@ pub struct Picker {
     pub message: String,
     index: usize,
     creating: bool,
+    deleting: bool,
     name: String,
     was_down: bool,
     dropdown: bool,
@@ -109,6 +120,7 @@ impl Picker {
             {
                 self.open = true;
                 self.creating = false;
+                self.deleting = false;
                 self.dropdown = false;
                 self.index = self
                     .names
@@ -164,21 +176,47 @@ impl Picker {
             }
             if (323.0..=349.0).contains(&y) {
                 if (45.0..=200.0).contains(&x) {
-                    self.open = false;
+                    if self.deleting {
+                        self.deleting = false;
+                    } else {
+                        self.open = false;
+                    }
                 } else if (580.0..=760.0).contains(&x) {
-                    if self.creating {
+                    if self.deleting {
+                        if let Some(name) = self.names.get(self.index) {
+                            self.request = Some(Request::Delete(name.clone()));
+                        }
+                    } else if self.creating {
                         self.request = Some(Request::Create(self.name.trim().to_string()));
                     } else if let Some(name) = self.names.get(self.index) {
                         self.request = Some(Request::Select(name.clone()));
                     }
                 }
-            } else if !self.creating && (115.0..=150.0).contains(&y) && (45.0..=750.0).contains(&x)
+            } else if !self.creating
+                && !self.deleting
+                && (115.0..=150.0).contains(&y)
+                && (45.0..=750.0).contains(&x)
             {
                 self.dropdown = true;
                 self.list_start = self.index.saturating_sub(5);
-            } else if !self.creating && (259.0..273.0).contains(&y) && (45.0..175.0).contains(&x) {
+            } else if !self.creating
+                && !self.deleting
+                && (259.0..273.0).contains(&y)
+                && (45.0..175.0).contains(&x)
+            {
                 self.creating = true;
                 self.name.clear();
+                self.message.clear();
+            } else if !self.creating
+                && !self.deleting
+                && (259.0..273.0).contains(&y)
+                && (450.0..616.0).contains(&x)
+                && self
+                    .names
+                    .get(self.index)
+                    .is_some_and(|name| !name.eq_ignore_ascii_case("default"))
+            {
+                self.deleting = true;
                 self.message.clear();
             }
         }
@@ -230,6 +268,16 @@ impl Picker {
                 0xc7d2e2,
             );
         } else {
+            if self.deleting {
+                text(buffer, 45, 105, "DELETE THIS PROFILE?", 0xffbb44);
+                if self
+                    .names
+                    .get(self.index)
+                    .is_some_and(|name| name.eq_ignore_ascii_case(&self.active))
+                {
+                    text(buffer, 45, 205, "THIS WILL SWITCH TO DEFAULT", 0xc7d2e2);
+                }
+            }
             for y in 115..151 {
                 buffer[y * 800 + 45..y * 800 + 750].fill(0x252d35);
             }
@@ -240,7 +288,16 @@ impl Picker {
                 let y = if self.dropdown { 135 - row } else { 128 + row };
                 buffer[y * 800 + 715 + row..y * 800 + 731 - row].fill(0x44cfff);
             }
-            text(buffer, 45, 259, "NEW PROFILE", 0x44cfff);
+            if !self.deleting {
+                text(buffer, 45, 259, "NEW PROFILE", 0x44cfff);
+                if self
+                    .names
+                    .get(self.index)
+                    .is_some_and(|name| !name.eq_ignore_ascii_case("default"))
+                {
+                    text(buffer, 450, 259, "DELETE PROFILE", 0x44cfff);
+                }
+            }
         }
         text(
             buffer,
@@ -259,7 +316,13 @@ impl Picker {
             buffer,
             580,
             333,
-            if self.creating { "CREATE" } else { "APPLY" },
+            if self.deleting {
+                "DELETE"
+            } else if self.creating {
+                "CREATE"
+            } else {
+                "APPLY"
+            },
             0x44cfff,
         );
         if self.dropdown {
@@ -332,6 +395,33 @@ fn character(key: Key) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deleting_custom_profile_requires_confirmation_and_default_is_protected() {
+        let mut picker = Picker {
+            open: true,
+            active: "WoW".into(),
+            names: vec!["Default".into(), "WoW".into()],
+            index: 1,
+            ..Default::default()
+        };
+        fn click(p: &mut Picker, x: f32, y: f32) {
+            p.input(Some((x, y)), true, &[]);
+            p.input(None, false, &[]);
+        }
+        click(&mut picker, 500.0, 265.0);
+        assert!(picker.deleting);
+        assert!(picker.request.is_none());
+        click(&mut picker, 100.0, 333.0);
+        assert!(!picker.deleting && picker.open);
+        click(&mut picker, 500.0, 265.0);
+        click(&mut picker, 600.0, 333.0);
+        assert!(matches!(picker.request, Some(Request::Delete(ref name)) if name == "WoW"));
+        picker.request = None;
+        picker.deleting = false;
+        picker.index = 0;
+        click(&mut picker, 500.0, 265.0);
+        assert!(!picker.deleting && picker.request.is_none());
+    }
     #[test]
     fn new_profile_ignores_blank_space_beside_its_label() {
         let mut picker = Picker {
@@ -416,6 +506,9 @@ mod tests {
             Some(original)
         );
         assert_eq!(names(&dir).unwrap(), vec!["Default", "WoW"]);
+        std::fs::remove_file(path(&dir, "WoW").unwrap()).unwrap();
+        assert!(!migrate(&dir).unwrap());
+        assert!(!path(&dir, "WoW").unwrap().exists());
         for item in std::fs::read_dir(&dir).unwrap() {
             std::fs::remove_file(item.unwrap().path()).unwrap();
         }

@@ -316,6 +316,9 @@ Switching profiles applies immediately and remembers the selection for the next
 launch, including when opening the EXE directly. Brightness controls and hardware
 setup remain shared across profiles.
 
+Select a custom profile and click **Delete Profile**, then confirm with **Delete**.
+Deleting the current profile switches to Default; Default itself cannot be deleted.
+
 An existing `backlight-sampling-wow.ini` is copied once into the custom **WoW**
 profile without changing its boxes, exclusions or individual readings. The old
 file is retained. Existing installations initially select WoW so their current

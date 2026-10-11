@@ -5,4 +5,5 @@ backlight-installed-strip.ini
 backlight-sampling*.ini
 backlight-profile-*.ini
 backlight-active-profile.txt
+backlight-profile-migration.txt
 

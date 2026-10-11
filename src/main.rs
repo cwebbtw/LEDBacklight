@@ -482,9 +482,25 @@ fn run() -> Result<()> {
                         "Restart without --no-saved-settings to use profiles"
                     );
                     sampling::save_optional(&layout_path, custom_layout.as_ref())?;
+                    if let profiles::Request::Delete(ref name) = request {
+                        ensure!(
+                            !name.eq_ignore_ascii_case("default"),
+                            "Default cannot be deleted"
+                        );
+                        let next = if name.eq_ignore_ascii_case(&active_profile) {
+                            "Default"
+                        } else {
+                            &active_profile
+                        };
+                        let profile = sampling::load(&profiles::path(profile_dir, next)?)?;
+                        profiles::remember(profile_dir, next)?;
+                        std::fs::remove_file(profiles::path(profile_dir, name)?)?;
+                        return Ok((next.to_string(), profile));
+                    }
                     let (name, create) = match request {
                         profiles::Request::Select(name) => (name, false),
                         profiles::Request::Create(name) => (name, true),
+                        profiles::Request::Delete(_) => unreachable!(),
                     };
                     let path = profiles::path(profile_dir, &name)?;
                     if create {
