@@ -1,6 +1,9 @@
 //! User-calibrated strip geometry and an in-window first-run setup wizard.
-use crate::{colour::Rgb, controls::text, ddp};
+#[cfg(test)]
+use crate::controls::text;
+use crate::{colour::Rgb, ddp};
 use anyhow::{Context, Result, ensure};
+#[cfg(test)]
 use minifb::Key;
 use std::{
     net::SocketAddr,
@@ -8,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
 const NAMES: [&str; 4] = ["TOP LEFT", "TOP RIGHT", "BOTTOM RIGHT", "BOTTOM LEFT"];
 const SIDE_COLOURS: [[u8; 3]; 4] = [[48, 0, 0], [0, 48, 0], [0, 0, 48], [48, 32, 0]];
 
@@ -181,8 +185,11 @@ pub struct Wizard {
     address: String,
     number: String,
     step: usize,
+    #[cfg(test)]
     field: bool,
+    #[cfg(test)]
     caret: usize,
+    #[cfg(test)]
     was_down: bool,
     test: bool,
     sender: Option<ddp::Sender>,
@@ -192,6 +199,166 @@ pub struct Wizard {
     pub monitors: Vec<String>,
 }
 impl Wizard {
+    pub fn led_count(&self) -> usize {
+        self.saved.leds
+    }
+    #[cfg(test)]
+    pub fn preview_page(&mut self, step: usize) {
+        self.begin();
+        self.change_step(step);
+    }
+    pub fn modern_ui(&mut self, ui: &mut eframe::egui::Ui) {
+        use eframe::egui::{self, RichText};
+        ui.vertical_centered(|ui| {
+            ui.set_max_width(740.0);
+            crate::gui::card().show(ui, |ui| {
+                ui.set_width(680.0);
+                ui.label(
+                    RichText::new(format!("STEP {} OF 7", self.step + 1))
+                        .small()
+                        .color(crate::gui::ACCENT),
+                );
+                let heading = match self.step {
+                    0 => "Connect your lights",
+                    1 => "Strip length and direction",
+                    2 => "Top-left corner",
+                    3 => "Top-right corner",
+                    4 => "Bottom-right corner",
+                    5 => "Bottom-left corner",
+                    _ => "Check the four sides",
+                };
+                ui.heading(heading);
+                ui.add_space(24.0);
+                match self.step {
+                    0 => {
+                        ui.label("Controller IP address and port");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.address)
+                                .margin(egui::Margin::symmetric(12, 10))
+                                .desired_width(f32::INFINITY)
+                                .hint_text("192.168.1.100:4048"),
+                        );
+                        ui.label(
+                            RichText::new("Set the connected LED count in WLED first.")
+                                .small()
+                                .color(crate::gui::MUTED),
+                        );
+                        ui.add_space(32.0);
+                        ui.label("Which monitor should the lights follow?");
+                        let selected = self
+                            .monitors
+                            .get(self.draft.monitor)
+                            .cloned()
+                            .unwrap_or_default();
+                        egui::ComboBox::from_id_salt("capture-monitor")
+                            .selected_text(format!("Monitor {selected}"))
+                            .width(ui.available_width() - 20.0)
+                            .show_ui(ui, |ui| {
+                                for (i, name) in self.monitors.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut self.draft.monitor,
+                                        i,
+                                        format!("Monitor {name}"),
+                                    );
+                                }
+                            });
+                    }
+                    1 => {
+                        ui.label("Total LEDs");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.number)
+                                .margin(egui::Margin::symmetric(12, 10))
+                                .desired_width(180.0),
+                        );
+                        ui.add_space(28.0);
+                        ui.label("Watch the moving light from the front of your monitor.");
+                        ui.label(
+                            RichText::new("Choose the direction you see.").color(crate::gui::MUTED),
+                        );
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut self.draft.clockwise, true, "Clockwise");
+                            ui.radio_value(&mut self.draft.clockwise, false, "Anticlockwise");
+                        });
+                    }
+                    2..=5 => {
+                        ui.label("Corner LED number");
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.number)
+                                .margin(egui::Margin::symmetric(12, 10))
+                                .desired_width(180.0),
+                        );
+                        if response.changed() && self.commit_field().is_ok() {
+                            self.message.clear();
+                            self.next_test = Instant::now();
+                        }
+                        ui.label(
+                            RichText::new("Changing the number lights up that LED immediately.")
+                                .small()
+                                .color(crate::gui::MUTED),
+                        );
+                        ui.add_space(28.0);
+                        let corner = self.step - 2;
+                        ui.radio_value(&mut self.draft.between[corner], false, "Corner has an LED");
+                        ui.radio_value(
+                            &mut self.draft.between[corner],
+                            true,
+                            "Corner is between two LEDs",
+                        );
+                        ui.add_space(16.0);
+                        ui.label(if self.draft.between[corner] {
+                            "Enter the last LED number before the bend."
+                        } else {
+                            "Enter the number of the LED at the corner."
+                        });
+                    }
+                    _ => {
+                        ui.label("The lights should match these sides of your monitor:");
+                        for (label, color) in [
+                            ("Top · Red", egui::Color32::from_rgb(249, 102, 117)),
+                            ("Right · Green", egui::Color32::from_rgb(99, 222, 154)),
+                            ("Bottom · Blue", egui::Color32::from_rgb(116, 162, 255)),
+                            ("Left · Yellow", egui::Color32::from_rgb(249, 212, 109)),
+                        ] {
+                            ui.colored_label(color, RichText::new(label).size(20.0));
+                        }
+                    }
+                }
+                if !self.message.is_empty() {
+                    ui.colored_label(egui::Color32::from_rgb(250, 158, 122), &self.message);
+                }
+                ui.add_space(36.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        self.stop();
+                        self.open = false;
+                    }
+                    if self.step > 0 && ui.button("Back").clicked() {
+                        self.change_step(self.step - 1);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::gui::primary(
+                            ui,
+                            if self.step == 6 { "Save setup" } else { "Next" },
+                        )
+                        .clicked()
+                        {
+                            let result = self.commit_field().and_then(|()| {
+                                if self.step == 6 {
+                                    self.draft.mapping()?;
+                                    self.apply = Some(self.draft.clone());
+                                } else {
+                                    self.change_step(self.step + 1);
+                                }
+                                Ok(())
+                            });
+                            self.message = result.err().map(|e| e.to_string()).unwrap_or_default();
+                        }
+                    });
+                });
+            });
+        });
+    }
     pub fn new(draft: Hardware, monitors: Vec<String>) -> Self {
         Self {
             open: false,
@@ -201,8 +368,11 @@ impl Wizard {
             saved: draft.clone(),
             draft,
             step: 0,
+            #[cfg(test)]
             field: false,
+            #[cfg(test)]
             caret: 0,
+            #[cfg(test)]
             was_down: false,
             test: false,
             sender: None,
@@ -218,7 +388,10 @@ impl Wizard {
         self.step = 0;
         self.test = false;
         self.address = self.draft.address.to_string();
-        self.field = false;
+        #[cfg(test)]
+        {
+            self.field = false;
+        }
         self.message.clear();
     }
     fn stop(&mut self) {
@@ -264,7 +437,10 @@ impl Wizard {
         self.stop();
         self.message.clear();
         self.step = step;
-        self.field = false;
+        #[cfg(test)]
+        {
+            self.field = false;
+        }
         self.number = if step == 1 {
             self.draft.leds.to_string()
         } else if (2..6).contains(&step) {
@@ -275,6 +451,7 @@ impl Wizard {
         self.next_test = Instant::now();
         self.rotation_started = self.next_test;
     }
+    #[cfg(test)]
     pub fn input(&mut self, mouse: Option<(f32, f32)>, down: bool, keys: &[Key]) {
         let fresh = down && !self.was_down;
         self.was_down = down;
@@ -319,7 +496,10 @@ impl Wizard {
             self.caret = (((x - 365.0).max(0.0) / 12.0).round() as usize).min(value.len());
             return;
         }
-        self.field = false;
+        #[cfg(test)]
+        {
+            self.field = false;
+        }
         if (323.0..=349.0).contains(&y) {
             if (45.0..=160.0).contains(&x) {
                 self.stop();
@@ -402,6 +582,7 @@ impl Wizard {
             self.message = format!("SEND FAILED - {e}");
         }
     }
+    #[cfg(test)]
     fn test_instruction(&self) -> String {
         match self.step {
             1 => "WATCH FROM THE FRONT - CHOOSE ITS DIRECTION BELOW".into(),
@@ -422,6 +603,7 @@ impl Wizard {
             _ => "DO THE SIDE COLOURS MATCH THE MONITOR?".into(),
         }
     }
+    #[cfg(test)]
     pub fn draw(&self, buffer: &mut [u32]) {
         if !self.open {
             text(buffer, 660, 370, "SETUP", 0x44cfff);
@@ -608,6 +790,7 @@ fn rotation_pixels(leds: usize, elapsed: Duration) -> Vec<[u8; 3]> {
     }
     pixels
 }
+#[cfg(test)]
 fn edit_text(value: &mut String, caret: &mut usize, key: Key) {
     *caret = (*caret).min(value.len());
     match key {
@@ -632,6 +815,7 @@ fn edit_text(value: &mut String, caret: &mut usize, key: Key) {
         }
     }
 }
+#[cfg(test)]
 fn typed(key: Key) -> Option<char> {
     Some(match key {
         Key::Key0 => '0',

@@ -1,6 +1,7 @@
+#[cfg(test)]
+use crate::controls::text;
 use crate::{
     capture::Frame,
-    controls::text,
     layout::Region,
     sampling::{Profile, Rect},
 };
@@ -76,6 +77,232 @@ impl Editor {
         Self {
             counts,
             ..Self::default()
+        }
+    }
+    pub fn modern_ui(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        cache: &mut crate::gui::Canvas,
+        colours: &[crate::colour::Rgb],
+        raw: bool,
+    ) {
+        use eframe::egui::{self, Color32, Stroke, StrokeKind};
+        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
+            self.undo();
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (index, label) in [
+                "Top",
+                "Right",
+                "Bottom",
+                "Left",
+                "Individual LEDs",
+                "Exclude area",
+                "Delete",
+                "Reset",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let selected = if index < 4 {
+                    !self.parts && self.selected == index
+                } else {
+                    index == 4 && self.parts
+                };
+                let response = ui.selectable_label(selected, label);
+                if response.clicked() {
+                    self.input(Some((45.0 + index as f32 * 92.0, 70.0)), true);
+                    self.input(None, false);
+                }
+            }
+        });
+        if self.adding {
+            ui.label(
+                eframe::egui::RichText::new("Draw an exclusion over the area to ignore.")
+                    .color(crate::gui::MUTED),
+            );
+        } else if self.parts {
+            let label = self
+                .part
+                .map(|index| {
+                    let mut offset = 0;
+                    for (edge, count) in self.counts.iter().enumerate() {
+                        if index < offset + count {
+                            return format!(
+                                "{} · Reading {}",
+                                ["Top", "Right", "Bottom", "Left"][edge],
+                                index - offset + 1
+                            );
+                        }
+                        offset += count;
+                    }
+                    "Select a reading".into()
+                })
+                .unwrap_or_else(|| "Select an individual reading box".into());
+            ui.label(eframe::egui::RichText::new(label).color(crate::gui::MUTED));
+        } else if self.blocked.contains(&true) {
+            ui.label(
+                eframe::egui::RichText::new("Fully blocked readings are shown in red.")
+                    .color(crate::gui::MUTED),
+            );
+        }
+        ui.add_space(8.0);
+        let available = ui.available_size().max(egui::vec2(100.0, 100.0));
+        let (canvas, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+        ui.painter()
+            .rect_filled(canvas, 12.0, Color32::from_rgb(7, 11, 18));
+        crate::gui::colour_frame(ui.painter(), canvas, colours, self.counts, raw);
+        let bounds = canvas.shrink(32.0);
+        let aspect = self.picture.width as f32 / self.picture.height as f32;
+        let size = if bounds.width() / bounds.height() > aspect {
+            egui::vec2(bounds.height() * aspect, bounds.height())
+        } else {
+            egui::vec2(bounds.width(), bounds.width() / aspect)
+        };
+        let picture = egui::Rect::from_center_size(bounds.center(), size);
+        let ppp = ui.ctx().pixels_per_point();
+        self.view_size = (
+            (picture.width() * ppp * 800.0 / self.picture.width as f32) as usize,
+            (picture.height() * ppp * 400.0 / self.picture.height as f32) as usize,
+        );
+        let (nw, nh) = self.native_size;
+        if nw > 0 && nh > 0 {
+            if cache
+                .texture
+                .as_ref()
+                .is_none_or(|(stamp, _)| *stamp != self.next_picture)
+            {
+                let pixels: Vec<_> = self
+                    .native_picture
+                    .iter()
+                    .map(|&v| Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
+                    .collect();
+                let image = egui::ColorImage::new([nw, nh], pixels);
+                if let Some((stamp, texture)) = &mut cache.texture {
+                    texture.set(image, egui::TextureOptions::LINEAR);
+                    *stamp = self.next_picture;
+                } else {
+                    cache.texture = Some((
+                        self.next_picture,
+                        ui.ctx().load_texture(
+                            "sampling-picture",
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    ));
+                }
+            }
+            if let Some((_, texture)) = &cache.texture {
+                ui.painter().image(
+                    texture.id(),
+                    picture,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+        } else {
+            ui.painter().text(
+                picture.center(),
+                egui::Align2::CENTER_CENTER,
+                "Waiting for screen capture…",
+                egui::FontId::proportional(16.0),
+                crate::gui::MUTED,
+            );
+        }
+        let map = |r: Rect| {
+            egui::Rect::from_min_max(
+                egui::pos2(
+                    picture.left() + r.0 as f32 / 10000.0 * picture.width(),
+                    picture.top() + r.1 as f32 / 10000.0 * picture.height(),
+                ),
+                egui::pos2(
+                    picture.left() + r.2 as f32 / 10000.0 * picture.width(),
+                    picture.top() + r.3 as f32 / 10000.0 * picture.height(),
+                ),
+            )
+        };
+        for (i, r) in self.reading_rects.iter().enumerate() {
+            ui.painter().rect_stroke(
+                map(*r),
+                0.0,
+                Stroke::new(
+                    1.0_f32,
+                    if self.blocked.get(i) == Some(&true) {
+                        Color32::from_rgb(248, 91, 106)
+                    } else {
+                        Color32::from_white_alpha(160)
+                    },
+                ),
+                StrokeKind::Inside,
+            );
+        }
+        if let Some(profile) = self.current() {
+            for (i, r) in profile.bands.iter().chain(&profile.exclusions).enumerate() {
+                let v = if i < 4 { COLOURS[i] } else { 0xff5555 };
+                let color = Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
+                let rect = map(*r);
+                ui.painter().rect_stroke(
+                    rect,
+                    0.0,
+                    Stroke::new(
+                        if !self.parts && i == self.selected {
+                            2.0
+                        } else {
+                            1.0_f32
+                        },
+                        color,
+                    ),
+                    StrokeKind::Inside,
+                );
+                if !self.parts && i == self.selected {
+                    let size = (8.0 * picture.width() / self.picture.width as f32).max(10.0);
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(
+                            rect.right_bottom() - egui::vec2(size / 2.0, size / 2.0),
+                            egui::vec2(size, size),
+                        ),
+                        2.0,
+                        color,
+                    );
+                }
+            }
+        }
+        if self.parts
+            && let Some(rect) = self.rect()
+        {
+            let rect = map(rect);
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                Stroke::new(2.0_f32, Color32::YELLOW),
+                StrokeKind::Inside,
+            );
+            let size = (8.0 * picture.width() / self.picture.width as f32).max(10.0);
+            ui.painter().rect_filled(
+                egui::Rect::from_center_size(rect.right_bottom(), egui::vec2(size, size)),
+                2.0,
+                Color32::YELLOW,
+            );
+        }
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let down = ui.input(|i| i.pointer.primary_down());
+        let inside = pointer.is_some_and(|pos| canvas.contains(pos));
+        let dragging = self.drag.is_some();
+        let logical = pointer.filter(|_| inside || dragging).map(|pos| {
+            (
+                self.picture.x as f32
+                    + (pos.x - picture.left()) * self.picture.width as f32 / picture.width(),
+                self.picture.y as f32
+                    + (pos.y - picture.top()) * self.picture.height as f32 / picture.height(),
+            )
+        });
+        self.input(logical, down && (inside || dragging));
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(if self.adding {
+                egui::CursorIcon::Crosshair
+            } else {
+                egui::CursorIcon::Default
+            });
         }
     }
     pub fn set_preset(&mut self, p: Profile) {
@@ -460,6 +687,7 @@ impl Editor {
     }
     /// Replace only the picture with full viewport detail, then draw geometry
     /// over it. UI coordinates remain stable and the colour frame stays intact.
+    #[cfg(test)]
     pub fn draw_native(&self, buffer: &mut [u32], width: usize, height: usize) {
         let view = crate::output::content_rect(width, height);
         let map = |r: Region| Region {
@@ -533,6 +761,7 @@ impl Editor {
             native_handle(buffer, width, height, q, 0xffff44, view.width * 8 / 800);
         }
     }
+    #[cfg(test)]
     pub fn draw(&self, buffer: &mut [u32]) {
         if self.open {
             for y in 30..360 {
@@ -675,6 +904,7 @@ fn near_border(r: Rect, nx: f32, ny: f32, pic: Region) -> bool {
             || (ny - r.3 as f32).abs() <= dy)
 }
 
+#[cfg(test)]
 fn outline_native(buffer: &mut [u32], width: usize, height: usize, r: Region, colour: u32) {
     let right = (r.x + r.width).min(width);
     let bottom = (r.y + r.height).min(height);
@@ -688,6 +918,7 @@ fn outline_native(buffer: &mut [u32], width: usize, height: usize, r: Region, co
         buffer[y * width + right - 1] = colour;
     }
 }
+#[cfg(test)]
 fn native_handle(
     buffer: &mut [u32],
     width: usize,
@@ -703,6 +934,7 @@ fn native_handle(
             .fill(colour);
     }
 }
+#[cfg(test)]
 fn outline(buffer: &mut [u32], r: Region, colour: u32) {
     for y in r.y..(r.y + r.height).min(400) {
         for x in r.x..(r.x + r.width).min(800) {

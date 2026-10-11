@@ -5,9 +5,15 @@ live DDP RGB output and a separate addressing test.
 Rust modules separate capture (`capture`),
 geometry (`layout`), averaging/smoothing (`colour`), and preview/debug output (`output`).
 
+The native interface uses egui/eframe with smooth fonts, standard controls and a
+resizable sampling canvas. Lighting controls, sampling, profiles and Setup have
+separate views. The UI runs on its own Windows event thread, while screen capture
+and LED output keep their existing update loop. Existing configuration files,
+sampling geometry, colour processing and controller mapping are unchanged.
+
 ## Setup and run
 
-Click **Setup** at the bottom right to configure a controller and a rectangular
+Click **Setup** at the top right of Live lighting to configure a controller and a rectangular
 monitor strip. The seven steps cover its IP/DDP port, capture screen, connected
 LED count, direction as viewed from the front, each of the four corners, and a
 four-colour side check. Configure the connected LED count in WLED first.
@@ -38,12 +44,12 @@ the `.cmd` files. `--no-saved-settings` ignores hardware setup too. The existing
 the separate legacy position-test utility still describes that installation.
 
 Click **Edit sampling** in the same Backlight window to see the captured active
-picture. The window now opens at 1600×800; resize or maximize it for easier editing.
-The interface scales with the window and keeps its aspect ratio, and mouse positions
-follow that scaling. The captured picture is rendered at the viewport's resolution,
+picture. The window opens at 1200×800 logical pixels; resize or maximize it for easier editing.
+The interface respects display scaling, and the sampling canvas keeps the captured
+picture's aspect ratio. The captured picture is rendered at the viewport's resolution,
 so enlarging the window reveals more detail rather than stretching the small
 thumbnail. Geometry outlines are redrawn over that detailed picture. Larger corner handles make resizing boxes easier to grab.
-To move just one reading, enable **Parts**, click a small white reading box,
+To move just one reading, enable **Individual LEDs**, click a small white reading box,
 then drag it. The selected part turns yellow, with a bottom-right resize handle.
 Its edge and part number appear below the picture. **Delete** restores that part
 to its section's default position; selecting an edge returns to whole-section
@@ -306,7 +312,7 @@ and [DuplicateOutput](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_
 
 ### Sampling profiles
 
-Open **Edit sampling**, then click **Profile** at the bottom right to select a named layout.
+Open **Edit sampling**, then click **Profile** at the top right to select a named layout.
 Select a profile from the dropdown; the active profile is marked **(current)**.
 Click **Apply** to switch. **Default** begins with the same clean edge sections as
 Reset, with no exclusions or individual reading overrides. **New Profile** always

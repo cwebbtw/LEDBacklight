@@ -14,15 +14,20 @@ impl Settings {
     }
 }
 
+#[cfg(test)]
 const LEFT: f32 = 310.0;
+#[cfg(test)]
 const RIGHT: f32 = 670.0;
+#[cfg(test)]
 const ROWS: [f32; 3] = [155.0, 225.0, 295.0];
 
+#[cfg(test)]
 #[derive(Default)]
 pub struct Controls {
     active: Option<usize>,
     was_down: bool,
 }
+#[cfg(test)]
 impl Controls {
     pub fn input(&mut self, mouse: Option<(f32, f32)>, down: bool, settings: &mut Settings) {
         if !down {
@@ -53,6 +58,7 @@ impl Controls {
         }
         self.was_down = down;
     }
+    #[allow(dead_code)]
     pub fn draw(&self, buffer: &mut [u32], settings: Settings, effective_brightness: f64) {
         text(buffer, 110, 75, "LIVE LIGHTING CONTROLS", 0xe4eaf2);
         for (left, checked, label) in [
@@ -131,6 +137,7 @@ impl Controls {
 }
 
 // Small embedded bitmap font keeps the existing lightweight preview dependency.
+#[cfg(test)]
 pub(crate) fn text(buffer: &mut [u32], x: usize, y: usize, value: &str, colour: u32) {
     for (i, c) in value.chars().enumerate() {
         let rows = match c {
