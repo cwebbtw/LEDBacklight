@@ -164,10 +164,8 @@ without resetting other controls. CLI: `--whiteness-correction`.
 Double-click `run-installed-strip.cmd` or `run-wow-lighting.cmd`: each starts
 the GUI and finishes without keeping a console open. Both launchers restore the
 last selected sampling profile and use the same fallback control settings.
-If an update was staged while the application was running, close Backlight
-yourself and reopen the launcher to install it. The launcher replaces a staged
-`backlight-next.exe` before starting; if the old executable is still locked it
-asks you to close it and exits without starting a second lighting stream.
+Close Backlight before rebuilding. Updates replace `backlight.exe` directly;
+the launchers simply open that executable.
 For terminal diagnostics run the executable directly with `--no-preview`,
 `--debug-rgb`, `--list-monitors`, `--help`, or `--updates`; those modes attach
 to the invoking console. Fatal GUI errors appear in a message box.
@@ -306,7 +304,7 @@ and [DuplicateOutput](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_
 
 ### Sampling profiles
 
-Click **Profile** between Edit sampling and Setup to select a named layout.
+Open **Edit sampling**, then click **Profile** at the bottom right to select a named layout.
 **Default** begins with the same clean edge sections as Reset, with no exclusions
 or individual reading overrides. **New Profile** copies the current layout;
 type a name and click Create, then use Edit sampling to configure its boxes.

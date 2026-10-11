@@ -102,7 +102,7 @@ impl Picker {
         if !self.open {
             if fresh
                 && mouse.is_some_and(|(x, y)| {
-                    (280.0..=620.0).contains(&x) && (362.0..=390.0).contains(&y)
+                    (430.0..=770.0).contains(&x) && (362.0..=390.0).contains(&y)
                 })
             {
                 self.open = true;
@@ -158,7 +158,7 @@ impl Picker {
                 .chars()
                 .take(28)
                 .collect();
-            text(buffer, 285, 370, &label.to_uppercase(), 0x44cfff);
+            text(buffer, 430, 370, &label.to_uppercase(), 0x44cfff);
             return;
         }
         for y in 30..360 {

@@ -92,7 +92,10 @@ impl Preview {
         } else {
             vec![]
         };
-        if !self.setup.open && !self.editor.open && self.profiles.input(mouse, down, &keys) {
+        if !self.setup.open
+            && (self.editor.open || self.profiles.open)
+            && self.profiles.input(mouse, down, &keys)
+        {
             return;
         }
         let was_setup = self.setup.open;
@@ -162,11 +165,11 @@ impl Preview {
         if !self.editor.open && !self.profiles.open {
             self.setup.draw(&mut self.buffer);
         }
-        if !self.setup.open && !self.editor.open {
+        if !self.setup.open && (self.editor.open || self.profiles.open) {
             self.profiles.draw(&mut self.buffer);
         }
         let (w, h) = self.window.get_size();
-        if self.editor.open && !self.setup.open && w > 0 && h > 0 {
+        if self.editor.open && !self.setup.open && !self.profiles.open && w > 0 && h > 0 {
             self.native_buffer.resize(w * h, 0);
             upscale_ui(&self.buffer, &mut self.native_buffer, w, h);
             self.editor.draw_native(&mut self.native_buffer, w, h);

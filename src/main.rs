@@ -510,6 +510,7 @@ fn run() -> Result<()> {
                         custom_layout = profile;
                         p.reconfigure(counts, custom_layout.clone());
                         p.profiles.active = active_profile.clone();
+                        p.editor.open = true;
                         p.profiles.names = profiles::names(profile_dir)?;
                         p.profiles.open = false;
                         sampling_key = None;
