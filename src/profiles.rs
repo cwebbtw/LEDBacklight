@@ -120,6 +120,9 @@ impl Picker {
             return self.open;
         }
         if self.creating {
+            if !keys.is_empty() {
+                self.message.clear();
+            }
             for key in keys {
                 if *key == Key::Backspace {
                     self.name.pop();
@@ -196,13 +199,29 @@ impl Picker {
         text(buffer, 45, 65, "SAMPLING PROFILES", 0xe4eaf2);
         if self.creating {
             text(buffer, 45, 105, "NEW PROFILE NAME", 0xc7d2e2);
+            for y in 132..166 {
+                buffer[y * 800 + 45..y * 800 + 750].fill(0x384857);
+            }
+            let name_label = self.name.to_uppercase();
             text(
                 buffer,
-                45,
+                55,
                 145,
-                &format!("{}|", self.name.to_uppercase()),
-                0xffffff,
+                if self.name.is_empty() {
+                    "TYPE PROFILE NAME"
+                } else {
+                    &name_label
+                },
+                if self.name.is_empty() {
+                    0x8796a7
+                } else {
+                    0xffffff
+                },
             );
+            let cursor = 55 + self.name.len() * 12;
+            for y in 141..161 {
+                buffer[y * 800 + cursor..y * 800 + cursor + 2].fill(0x44cfff);
+            }
             text(
                 buffer,
                 45,
