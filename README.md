@@ -5,9 +5,15 @@ live DDP RGB output and a separate addressing test.
 Rust modules separate capture (`capture`),
 geometry (`layout`), averaging/smoothing (`colour`), and preview/debug output (`output`).
 
+The native interface uses egui/eframe with smooth fonts, standard controls and a
+resizable sampling canvas. Lighting controls, sampling, profiles and Setup have
+separate views. The UI runs on its own Windows event thread, while screen capture
+and LED output keep their existing update loop. Existing configuration files,
+sampling geometry, colour processing and controller mapping are unchanged.
+
 ## Setup and run
 
-Click **Setup** at the bottom right to configure a controller and a rectangular
+Click **Setup** at the top right of Live lighting to configure a controller and a rectangular
 monitor strip. The seven steps cover its IP/DDP port, capture screen, connected
 LED count, direction as viewed from the front, each of the four corners, and a
 four-colour side check. Configure the connected LED count in WLED first.
@@ -38,13 +44,14 @@ the `.cmd` files. `--no-saved-settings` ignores hardware setup too. The existing
 the separate legacy position-test utility still describes that installation.
 
 Click **Edit sampling** in the same Backlight window to see the captured active
-picture. The window now opens at 1600×800; resize or maximize it for easier editing.
-The interface scales with the window and keeps its aspect ratio, and mouse positions
-follow that scaling. The captured picture is rendered at the viewport's resolution,
+picture. The window opens at 1200×800 logical pixels; resize or maximize it for easier editing.
+The interface respects display scaling, and the sampling canvas keeps the captured
+picture's aspect ratio. The captured picture is rendered at the viewport's resolution,
 so enlarging the window reveals more detail rather than stretching the small
 thumbnail. Geometry outlines are redrawn over that detailed picture. Larger corner handles make resizing boxes easier to grab.
-To move just one reading, enable **Parts**, click a small white reading box,
+To move just one reading, enable **Individual LEDs**, click a small white reading box,
 then drag it. The selected part turns yellow, with a bottom-right resize handle.
+Only dragging the solid yellow square resizes the reading; dragging its body moves it.
 Its edge and part number appear below the picture. **Delete** restores that part
 to its section's default position; selecting an edge returns to whole-section
 editing. Individual overrides are remembered and stay attached to the same LED
@@ -57,14 +64,14 @@ relocated around exclusions. The live colour frame remains visible around the
 editor; **Done - lighting** returns to the brightness and timing controls.
 
 Choose **Exclude**, then draw a red box over UI such as buffs, right-hand action
-bars, a map or chat. Click an exclusion's red border to select and move/resize it; **Delete** removes the
-selected exclusion. Exclusions move affected readings to nearby clear pixels;
+bars, a map or chat. With **Exclude area** selected, click inside an exclusion or on its red border to select and move it; use its corner handle to resize it. Drag in empty space to add another exclusion. Exclusions cannot be selected while editing edge sections or individual LEDs. **Delete** removes the
+selected exclusion; the **Delete** key does the same while Exclude area is active. Exclusions move affected readings to nearby clear pixels;
 bottom readings keep their horizontal positions and move straight upwards.
 If necessary, their depth shrinks while their horizontal span stays unchanged;
 a bottom reading with no clear pixels above it is blocked rather than moved sideways.
 they cannot recover scenery hidden behind the game UI. If a reading cannot fit,
 it shrinks until it fits; an entirely excluded picture produces black output.
-**Reset** clears all exclusions and individual-part overrides, restores the
+**Reset** asks for confirmation before clearing all exclusions and individual-part overrides and restoring the
 standard edge bands, and removes any bottom inset. It saves that clean layout
 within the active profile.
 
@@ -88,7 +95,7 @@ Backlight appears in Print Screen and other screenshots. Its visible window
 rectangle is temporarily excluded from LED readings to prevent preview feedback;
 move it to another monitor for unobstructed readings and editor pictures.
 Win+D/minimizing hides the window while capture and LED updates continue. Restore
-it from the taskbar or with Win+D. Escape quits only while Backlight has focus.
+it from the taskbar or with Win+D. Escape leaves Backlight running.
 This uses Backlight's own window handle only. It uses desktop
 pixels, with no game memory access, injection, game inputs or game-process control.
 
@@ -199,7 +206,7 @@ the achieved sender update rate, not just the configured target. Smoothing is a
 time constant, not a fixed delay; it takes about three time constants to reach
 95% of a colour change. It can be disabled entirely with `--smoothing-ms 0`.
 
-The preview displays individual output-colour segments around a dark centre; Escape or closing
+The preview displays individual output-colour segments around a dark centre; closing
 the window exits. Headless mode exits with Ctrl+C. Debug output emits one line per
 update, space-separated `R,G,B` triples in clockwise order: top left-to-right,
 right top-to-bottom, bottom right-to-left, left bottom-to-top. Corners intentionally
@@ -306,7 +313,7 @@ and [DuplicateOutput](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_
 
 ### Sampling profiles
 
-Open **Edit sampling**, then click **Profile** at the bottom right to select a named layout.
+Open **Edit sampling**, then click **Profile** at the top right to select a named layout.
 Select a profile from the dropdown; the active profile is marked **(current)**.
 Click **Apply** to switch. **Default** begins with the same clean edge sections as
 Reset, with no exclusions or individual reading overrides. **New Profile** always

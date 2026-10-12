@@ -1,6 +1,9 @@
 //! Named sampling layouts and their in-window selector.
-use crate::{controls::text, sampling};
+#[cfg(test)]
+use crate::controls::text;
+use crate::sampling;
 use anyhow::{Result, ensure};
+#[cfg(test)]
 use minifb::Key;
 use std::path::{Path, PathBuf};
 
@@ -104,11 +107,174 @@ pub struct Picker {
     creating: bool,
     deleting: bool,
     name: String,
+    #[cfg(test)]
     was_down: bool,
+    #[cfg(test)]
     dropdown: bool,
+    #[cfg(test)]
     list_start: usize,
+    focus_name: bool,
 }
 impl Picker {
+    #[cfg(test)]
+    pub fn preview_mode(&mut self, creating: bool, deleting: bool) {
+        self.begin();
+        self.creating = creating;
+        self.deleting = deleting;
+    }
+    pub fn begin(&mut self) {
+        self.open = true;
+        self.creating = false;
+        self.deleting = false;
+        #[cfg(test)]
+        {
+            self.dropdown = false;
+        }
+        self.index = self
+            .names
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(&self.active))
+            .unwrap_or(0);
+        self.message.clear();
+    }
+    pub fn modern_ui(&mut self, ui: &mut eframe::egui::Ui) {
+        use eframe::egui::{self, RichText};
+        ui.vertical_centered(|ui| {
+            ui.set_max_width(650.0);
+            crate::gui::card().show(ui, |ui| {
+                ui.set_width(590.0);
+                if self.creating {
+                    crate::gui::title(
+                        ui,
+                        "New sampling profile",
+                        "Start with clean default sampling sections.",
+                    );
+                    ui.label("Profile name");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.name)
+                            .margin(egui::Margin::symmetric(12, 10))
+                            .hint_text("e.g. Movies")
+                            .char_limit(24)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if self.focus_name {
+                        response.request_focus();
+                        self.focus_name = false;
+                    }
+                    if response.changed() {
+                        self.message.clear();
+                    }
+                } else if self.deleting {
+                    crate::gui::title(
+                        ui,
+                        "Delete profile",
+                        "This removes the saved sampling layout.",
+                    );
+                    if let Some(name) = self.names.get(self.index) {
+                        ui.label(RichText::new(name).size(24.0).strong());
+                        if name.eq_ignore_ascii_case(&self.active) {
+                            ui.label("Default will become the current profile.");
+                        }
+                    }
+                } else {
+                    crate::gui::title(
+                        ui,
+                        "Sampling profiles",
+                        "Choose which sampling layout to edit.",
+                    );
+                    ui.label("Profile");
+                    let selected = self
+                        .names
+                        .get(self.index)
+                        .map(|name| {
+                            if name.eq_ignore_ascii_case(&self.active) {
+                                format!("{name} (current)")
+                            } else {
+                                name.clone()
+                            }
+                        })
+                        .unwrap_or_else(|| "Default".into());
+                    egui::ComboBox::from_id_salt("sampling-profile")
+                        .selected_text(selected)
+                        .width(ui.available_width() - 20.0)
+                        .show_ui(ui, |ui| {
+                            for (index, name) in self.names.iter().enumerate() {
+                                let label = if name.eq_ignore_ascii_case(&self.active) {
+                                    format!("{name} (current)")
+                                } else {
+                                    name.clone()
+                                };
+                                ui.selectable_value(&mut self.index, index, label);
+                            }
+                        });
+                    ui.add_space(24.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("New profile").clicked() {
+                            self.creating = true;
+                            self.focus_name = true;
+                            self.name.clear();
+                            self.message.clear();
+                        }
+                        if self
+                            .names
+                            .get(self.index)
+                            .is_some_and(|name| !name.eq_ignore_ascii_case("default"))
+                            && ui.button("Delete profile").clicked()
+                        {
+                            self.deleting = true;
+                            self.message.clear();
+                        }
+                    });
+                }
+                if !self.message.is_empty() {
+                    ui.colored_label(egui::Color32::from_rgb(250, 158, 122), &self.message);
+                }
+                ui.add_space(32.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        if self.deleting {
+                            self.deleting = false;
+                            self.message.clear();
+                        } else {
+                            self.open = false;
+                        }
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let label = if self.deleting {
+                            "Delete"
+                        } else if self.creating {
+                            "Create profile"
+                        } else {
+                            "Apply"
+                        };
+                        let clicked = if self.deleting {
+                            ui.add(
+                                egui::Button::new(label).fill(egui::Color32::from_rgb(119, 45, 56)),
+                            )
+                            .clicked()
+                        } else {
+                            crate::gui::primary(ui, label).clicked()
+                        };
+                        if clicked {
+                            self.request = if self.creating {
+                                Some(Request::Create(self.name.trim().to_string()))
+                            } else {
+                                self.names.get(self.index).map(|name| {
+                                    if self.deleting {
+                                        Request::Delete(name.clone())
+                                    } else {
+                                        Request::Select(name.clone())
+                                    }
+                                })
+                            };
+                        }
+                    });
+                });
+            });
+        });
+    }
+    #[cfg(test)]
     pub fn input(&mut self, mouse: Option<(f32, f32)>, down: bool, keys: &[Key]) -> bool {
         let fresh = down && !self.was_down;
         self.was_down = down;
@@ -121,7 +287,10 @@ impl Picker {
                 self.open = true;
                 self.creating = false;
                 self.deleting = false;
-                self.dropdown = false;
+                #[cfg(test)]
+                {
+                    self.dropdown = false;
+                }
                 self.index = self
                     .names
                     .iter()
@@ -171,7 +340,10 @@ impl Picker {
                         self.index = index;
                     }
                 }
-                self.dropdown = false;
+                #[cfg(test)]
+                {
+                    self.dropdown = false;
+                }
                 return true;
             }
             if (323.0..=349.0).contains(&y) {
@@ -222,6 +394,8 @@ impl Picker {
         }
         true
     }
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn draw(&self, buffer: &mut [u32]) {
         if !self.open {
             let label: String = format!("PROFILE: {}", self.active)
@@ -338,6 +512,7 @@ impl Picker {
             }
         }
     }
+    #[cfg(test)]
     fn label(&self, name: &str) -> String {
         if name.eq_ignore_ascii_case(&self.active) {
             format!("{} (current)", name.to_uppercase())
@@ -346,6 +521,7 @@ impl Picker {
         }
     }
 }
+#[cfg(test)]
 fn character(key: Key) -> Option<char> {
     Some(match key {
         Key::A => 'a',

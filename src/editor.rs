@@ -1,6 +1,7 @@
+#[cfg(test)]
+use crate::controls::text;
 use crate::{
     capture::Frame,
-    controls::text,
     layout::Region,
     sampling::{Profile, Rect},
 };
@@ -23,6 +24,7 @@ pub struct Editor {
     parts: bool,
     part: Option<usize>,
     pub counts: [usize; 4],
+    // Exclude area mode: selects existing exclusions or draws in empty space.
     adding: bool,
     drag: Option<Drag>,
     was_down: bool,
@@ -37,6 +39,8 @@ pub struct Editor {
     pub view_size: (usize, usize),
     native_picture: Vec<u32>,
     native_size: (usize, usize),
+    part_handle_half: (f32, f32),
+    reset_pending: bool,
 }
 impl Default for Editor {
     fn default() -> Self {
@@ -68,6 +72,8 @@ impl Default for Editor {
             view_size: (1600, 800),
             native_picture: vec![],
             native_size: (0, 0),
+            part_handle_half: (8.0, 8.0),
+            reset_pending: false,
         }
     }
 }
@@ -77,6 +83,328 @@ impl Editor {
             counts,
             ..Self::default()
         }
+    }
+    pub fn modern_ui(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        cache: &mut crate::gui::Canvas,
+        colours: &[crate::colour::Rgb],
+        raw: bool,
+    ) {
+        ui.add_enabled_ui(!self.reset_pending, |ui| {
+            self.modern_content(ui, cache, colours, raw)
+        });
+        if self.reset_pending {
+            eframe::egui::Modal::new(eframe::egui::Id::new("confirm-sampling-reset"))
+                .frame(crate::gui::card().inner_margin(28))
+                .show(ui.ctx(), |ui| {
+                ui.set_width(440.0);
+                ui.heading("Reset sampling?");
+                ui.add_space(12.0);
+                ui.label("Restore the edge sections and remove all exclusions and individual LED adjustments in this profile.");
+                ui.add_space(28.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() { self.resolve_reset(false); }
+                    ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                        if crate::gui::primary(ui,"Reset sampling").clicked() { self.resolve_reset(true); }
+                    });
+                });
+            });
+        }
+    }
+    fn resolve_reset(&mut self, confirmed: bool) {
+        self.reset_pending = false;
+        if confirmed {
+            self.input(None, false);
+            self.input(Some((689.0, 70.0)), true);
+            self.input(None, false);
+        }
+    }
+    #[cfg(test)]
+    pub fn preview_reset_dialog(&mut self) {
+        self.reset_pending = true;
+    }
+    fn modern_content(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        cache: &mut crate::gui::Canvas,
+        colours: &[crate::colour::Rgb],
+        raw: bool,
+    ) {
+        use eframe::egui::{self, Color32, Stroke, StrokeKind};
+        if !self.reset_pending && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
+            self.undo();
+        }
+        if ui.is_enabled()
+            && !self.reset_pending
+            && self.adding
+            && self.can_delete()
+            && ui.input(|i| i.key_pressed(egui::Key::Delete))
+        {
+            self.input(None, false);
+            self.input(Some((620.0, 70.0)), true);
+            self.input(None, false);
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (index, label) in [
+                "Top",
+                "Right",
+                "Bottom",
+                "Left",
+                "Individual LEDs",
+                "Exclude area",
+                "Delete",
+                "Reset",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let selected = self.toolbar_selected(index);
+                let response = ui.add_enabled(
+                    index != 6 || self.can_delete(),
+                    egui::Button::selectable(selected, label),
+                );
+                if response.clicked() {
+                    if index == 7 {
+                        self.reset_pending = true;
+                    } else {
+                        self.input(Some((45.0 + index as f32 * 92.0, 70.0)), true);
+                        self.input(None, false);
+                    }
+                }
+            }
+        });
+        let hint = if self.adding {
+            "Select an exclusion, or drag in empty space to draw one.".to_owned()
+        } else if self.parts {
+            self.part
+                .map(|index| {
+                    let mut offset = 0;
+                    for (edge, count) in self.counts.iter().enumerate() {
+                        if index < offset + count {
+                            return format!(
+                                "{} · Reading {}",
+                                ["Top", "Right", "Bottom", "Left"][edge],
+                                index - offset + 1
+                            );
+                        }
+                        offset += count;
+                    }
+                    "Select a reading".into()
+                })
+                .unwrap_or_else(|| "Select an individual reading box".into())
+        } else if self.blocked.contains(&true) {
+            "Fully blocked readings are shown in red.".to_owned()
+        } else {
+            String::new()
+        };
+        // Reserve this row even when empty so mode changes never resize the preview.
+        let (hint_row, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+        ui.painter().text(
+            hint_row.left_center(),
+            egui::Align2::LEFT_CENTER,
+            hint,
+            egui::FontId::proportional(16.0),
+            crate::gui::MUTED,
+        );
+        ui.add_space(8.0);
+        let available = ui.available_size().max(egui::vec2(100.0, 100.0));
+        let (canvas, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+        ui.painter()
+            .rect_filled(canvas, 12.0, Color32::from_rgb(7, 11, 18));
+        crate::gui::colour_frame(ui.painter(), canvas, colours, self.counts, raw);
+        let bounds = canvas.shrink(32.0);
+        let aspect = self.picture.width as f32 / self.picture.height as f32;
+        let size = if bounds.width() / bounds.height() > aspect {
+            egui::vec2(bounds.height() * aspect, bounds.height())
+        } else {
+            egui::vec2(bounds.width(), bounds.width() / aspect)
+        };
+        let picture = egui::Rect::from_center_size(bounds.center(), size);
+        let part_handle_size = (8.0 * picture.width() / self.picture.width as f32).max(10.0);
+        self.part_handle_half = (
+            part_handle_size * self.picture.width as f32 / (2.0 * picture.width()),
+            part_handle_size * self.picture.height as f32 / (2.0 * picture.height()),
+        );
+        let ppp = ui.ctx().pixels_per_point();
+        self.view_size = (
+            (picture.width() * ppp * 800.0 / self.picture.width as f32) as usize,
+            (picture.height() * ppp * 400.0 / self.picture.height as f32) as usize,
+        );
+        let (nw, nh) = self.native_size;
+        if nw > 0 && nh > 0 {
+            if cache
+                .texture
+                .as_ref()
+                .is_none_or(|(stamp, _)| *stamp != self.next_picture)
+            {
+                let pixels: Vec<_> = self
+                    .native_picture
+                    .iter()
+                    .map(|&v| Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
+                    .collect();
+                let image = egui::ColorImage::new([nw, nh], pixels);
+                if let Some((stamp, texture)) = &mut cache.texture {
+                    texture.set(image, egui::TextureOptions::LINEAR);
+                    *stamp = self.next_picture;
+                } else {
+                    cache.texture = Some((
+                        self.next_picture,
+                        ui.ctx().load_texture(
+                            "sampling-picture",
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    ));
+                }
+            }
+            if let Some((_, texture)) = &cache.texture {
+                ui.painter().image(
+                    texture.id(),
+                    picture,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+        } else {
+            ui.painter().text(
+                picture.center(),
+                egui::Align2::CENTER_CENTER,
+                "Waiting for screen capture…",
+                egui::FontId::proportional(16.0),
+                crate::gui::MUTED,
+            );
+        }
+        let map = |r: Rect| {
+            egui::Rect::from_min_max(
+                egui::pos2(
+                    picture.left() + r.0 as f32 / 10000.0 * picture.width(),
+                    picture.top() + r.1 as f32 / 10000.0 * picture.height(),
+                ),
+                egui::pos2(
+                    picture.left() + r.2 as f32 / 10000.0 * picture.width(),
+                    picture.top() + r.3 as f32 / 10000.0 * picture.height(),
+                ),
+            )
+        };
+        for (i, r) in self.reading_rects.iter().enumerate() {
+            ui.painter().rect_stroke(
+                map(*r),
+                0.0,
+                Stroke::new(
+                    1.0_f32,
+                    if self.blocked.get(i) == Some(&true) {
+                        Color32::from_rgb(248, 91, 106)
+                    } else {
+                        Color32::from_white_alpha(160)
+                    },
+                ),
+                StrokeKind::Inside,
+            );
+        }
+        if let Some(profile) = self.current() {
+            for (i, r) in profile.bands.iter().chain(&profile.exclusions).enumerate() {
+                let v = if i < 4 { COLOURS[i] } else { 0xff5555 };
+                let color = Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
+                let rect = map(*r);
+                ui.painter().rect_stroke(
+                    rect,
+                    0.0,
+                    Stroke::new(
+                        if !self.parts && i == self.selected {
+                            2.0
+                        } else {
+                            1.0_f32
+                        },
+                        color,
+                    ),
+                    StrokeKind::Inside,
+                );
+                if !self.parts && i == self.selected {
+                    let size = (8.0 * picture.width() / self.picture.width as f32).max(10.0);
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(
+                            rect.right_bottom() - egui::vec2(size / 2.0, size / 2.0),
+                            egui::vec2(size, size),
+                        ),
+                        2.0,
+                        color,
+                    );
+                }
+            }
+        }
+        if self.parts
+            && let Some(rect) = self.rect()
+        {
+            let rect = map(rect);
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                Stroke::new(2.0_f32, Color32::YELLOW),
+                StrokeKind::Inside,
+            );
+            ui.painter().rect_filled(
+                egui::Rect::from_center_size(
+                    rect.right_bottom(),
+                    egui::vec2(part_handle_size, part_handle_size),
+                ),
+                2.0,
+                Color32::YELLOW,
+            );
+        }
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let down = ui.input(|i| i.pointer.primary_down());
+        let inside = pointer.is_some_and(|pos| canvas.contains(pos));
+        let dragging = self.drag.is_some();
+        let logical = pointer.filter(|_| inside || dragging).map(|pos| {
+            (
+                self.picture.x as f32
+                    + (pos.x - picture.left()) * self.picture.width as f32 / picture.width(),
+                self.picture.y as f32
+                    + (pos.y - picture.top()) * self.picture.height as f32 / picture.height(),
+            )
+        });
+        if self.reset_pending {
+            self.input(None, false);
+        } else {
+            self.input(logical, down && (inside || dragging));
+        }
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(if self.adding {
+                egui::CursorIcon::Crosshair
+            } else {
+                egui::CursorIcon::Default
+            });
+        }
+    }
+    fn can_delete(&self) -> bool {
+        if self.parts {
+            return self.part.is_some_and(|index| {
+                self.current()
+                    .is_some_and(|profile| profile.parts.contains_key(&index))
+            });
+        }
+        self.adding
+            && self.selected.checked_sub(4).is_some_and(|index| {
+                self.current()
+                    .is_some_and(|profile| index < profile.exclusions.len())
+            })
+    }
+    fn toolbar_selected(&self, index: usize) -> bool {
+        match index {
+            0..=3 => !self.adding && !self.parts && self.selected == index,
+            4 => !self.adding && self.parts,
+            5 => self.adding,
+            _ => false,
+        }
+    }
+    fn part_handle_hit(&self, nx: f32, ny: f32) -> bool {
+        self.rect().is_some_and(|r| {
+            (nx - r.2 as f32).abs() * self.picture.width as f32 / 10000.0 <= self.part_handle_half.0
+                && (ny - r.3 as f32).abs() * self.picture.height as f32 / 10000.0
+                    <= self.part_handle_half.1
+        })
     }
     pub fn set_preset(&mut self, p: Profile) {
         self.preset = Some(p);
@@ -189,12 +517,14 @@ impl Editor {
                     self.parts = !self.parts;
                     self.part = None;
                     self.adding = false;
+                    self.selected = 0;
                     self.drag = None;
                 }
                 5 => {
                     self.parts = false;
                     self.part = None;
                     self.adding = true;
+                    self.selected = usize::MAX;
                 }
                 6 if self.parts && self.part.is_some() => {
                     if let Some(p) = &mut self.profile {
@@ -203,7 +533,7 @@ impl Editor {
                     }
                     self.part = None;
                 }
-                6 if !self.parts && self.selected >= 4 => {
+                6 if !self.parts && self.can_delete() => {
                     if self.profile.is_none() {
                         self.profile = self.preset.clone();
                     }
@@ -211,8 +541,7 @@ impl Editor {
                         p.exclusions.remove(self.selected - 4);
                         self.dirty = true;
                     }
-                    self.selected = 0;
-                    self.adding = false;
+                    self.selected = usize::MAX;
                 }
                 7 => {
                     self.parts = false;
@@ -243,16 +572,20 @@ impl Editor {
         // Clamping here made edge handles unclickable in the surrounding margin.
         let nx = (x - pic.x as f32) / pic.width as f32 * 10000.0;
         let ny = (y - pic.y as f32) / pic.height as f32 * 10000.0;
-        let selected_handle = self.rect().is_some_and(|r| {
-            (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
-        });
+        let selected_handle = if self.parts {
+            self.part_handle_hit(nx, ny)
+        } else {
+            self.rect().is_some_and(|r| {
+                (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
+                    && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
+            })
+        };
         let border = |r| near_border(r, nx, ny, pic);
-        let outside_hit = !self.adding
-            && (selected_handle
-                || (!self.parts
-                    && (self.rect().is_some_and(border)
-                        || self
+        let outside_hit = selected_handle
+            || (!self.parts
+                && (self.rect().is_some_and(border)
+                    || (self.adding
+                        && self
                             .current()
                             .unwrap()
                             .exclusions
@@ -261,10 +594,7 @@ impl Editor {
                             .any(border))));
         if fresh && (inside || outside_hit) {
             if self.parts {
-                let handle = self.rect().is_some_and(|r| {
-                    (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                        && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
-                });
+                let handle = selected_handle;
                 if !handle {
                     self.part = self.readings.iter().rposition(|r| {
                         x >= r.x as f32
@@ -274,38 +604,32 @@ impl Editor {
                     });
                 }
                 if let Some(r) = self.rect() {
-                    let near = (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                        && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0;
                     // First click selects/moves a part; only an already-selected
                     // handle resizes, so narrow neighbouring boxes stay selectable.
-                    self.drag = Some(if handle && near {
+                    self.drag = Some(if handle {
                         Drag::Resize(r)
                     } else {
                         Drag::Move(r, nx, ny)
                     });
                 }
             } else if self.adding {
-                if self.current().unwrap().exclusions.len() < 32 {
+                let hit = self.current().unwrap().exclusions.iter().rposition(|r| {
+                    border(*r)
+                        || (nx >= r.0 as f32
+                            && nx <= r.2 as f32
+                            && ny >= r.1 as f32
+                            && ny <= r.3 as f32)
+                });
+                if selected_handle && let Some(r) = self.rect() {
+                    self.drag = Some(Drag::Resize(r));
+                } else if let Some(index) = hit {
+                    self.selected = index + 4;
+                    self.drag = self.rect().map(|r| Drag::Move(r, nx, ny));
+                } else if inside && self.current().unwrap().exclusions.len() < 32 {
+                    self.selected = usize::MAX;
                     self.drag = Some(Drag::New(nx, ny));
                 }
             } else {
-                // Prefer the selected band's handle even when an exclusion
-                // covers it. Select other exclusions by their red borders,
-                // leaving band interiors draggable through overlapping UI.
-                let handle = self.rect().is_some_and(|r| {
-                    (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                        && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
-                });
-                if !handle
-                    && let Some(i) = self
-                        .current()
-                        .unwrap()
-                        .exclusions
-                        .iter()
-                        .rposition(|r| border(*r))
-                {
-                    self.selected = i + 4;
-                }
                 if let Some(r) = self.rect() {
                     let near = (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
                         && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0;
@@ -356,7 +680,6 @@ impl Editor {
                     p.exclusions.push(r);
                     self.dirty = true;
                     self.selected = p.exclusions.len() + 3;
-                    self.adding = false;
                     self.drag = Some(Drag::Draw(sx, sy));
                     r
                 }
@@ -392,10 +715,6 @@ impl Editor {
         if !self.open {
             return;
         }
-        if Instant::now() < self.next_picture {
-            return;
-        }
-        self.next_picture = Instant::now() + Duration::from_millis(50);
         let scale = (740.0 / bounds.width as f64).min(230.0 / bounds.height as f64);
         let w = (bounds.width as f64 * scale).round().max(1.0) as usize;
         let h = (bounds.height as f64 * scale).round().max(1.0) as usize;
@@ -405,6 +724,12 @@ impl Editor {
             width: w,
             height: h,
         };
+        self.update_readings(bounds, readings, blocked);
+        // Geometry must follow edits immediately; only image resampling is throttled.
+        if Instant::now() < self.next_picture {
+            return;
+        }
+        self.next_picture = Instant::now() + Duration::from_millis(50);
         let view = crate::output::content_rect(self.view_size.0, self.view_size.1);
         let nw = (w * view.width / 800).max(1);
         let nh = (h * view.height / 400).max(1);
@@ -430,6 +755,9 @@ impl Editor {
                         | u32::from(frame.data[i]);
             }
         }
+    }
+    fn update_readings(&mut self, bounds: Region, readings: &[Region], blocked: &[bool]) {
+        let (w, h) = (self.picture.width, self.picture.height);
         self.readings = readings
             .iter()
             .map(|r| Region {
@@ -460,6 +788,7 @@ impl Editor {
     }
     /// Replace only the picture with full viewport detail, then draw geometry
     /// over it. UI coordinates remain stable and the colour frame stays intact.
+    #[cfg(test)]
     pub fn draw_native(&self, buffer: &mut [u32], width: usize, height: usize) {
         let view = crate::output::content_rect(width, height);
         let map = |r: Region| Region {
@@ -533,6 +862,7 @@ impl Editor {
             native_handle(buffer, width, height, q, 0xffff44, view.width * 8 / 800);
         }
     }
+    #[cfg(test)]
     pub fn draw(&self, buffer: &mut [u32]) {
         if self.open {
             for y in 30..360 {
@@ -675,6 +1005,7 @@ fn near_border(r: Rect, nx: f32, ny: f32, pic: Region) -> bool {
             || (ny - r.3 as f32).abs() <= dy)
 }
 
+#[cfg(test)]
 fn outline_native(buffer: &mut [u32], width: usize, height: usize, r: Region, colour: u32) {
     let right = (r.x + r.width).min(width);
     let bottom = (r.y + r.height).min(height);
@@ -688,6 +1019,7 @@ fn outline_native(buffer: &mut [u32], width: usize, height: usize, r: Region, co
         buffer[y * width + right - 1] = colour;
     }
 }
+#[cfg(test)]
 fn native_handle(
     buffer: &mut [u32],
     width: usize,
@@ -703,6 +1035,7 @@ fn native_handle(
             .fill(colour);
     }
 }
+#[cfg(test)]
 fn outline(buffer: &mut [u32], r: Region, colour: u32) {
     for y in r.y..(r.y + r.height).min(400) {
         for x in r.x..(r.x + r.width).min(800) {
@@ -715,6 +1048,247 @@ fn outline(buffer: &mut [u32], r: Region, colour: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reading_geometry_tracks_edge_changes_between_image_refreshes() {
+        let frame = Frame {
+            width: 100,
+            height: 100,
+            pitch: 400,
+            data: vec![0; 40000],
+        };
+        let bounds = Region {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+        let mut e = Editor {
+            open: true,
+            ..Default::default()
+        };
+        let mut profile = Profile::preset(100, 100, 10, 0, false);
+        profile.bands[3] = Rect(500, 0, 1500, 10000);
+        let (readings, blocked) = profile.regions(100, 100, [2; 4]);
+        e.capture(&frame, bounds, &readings, &blocked);
+        assert_eq!(e.reading_rects[6].0, 500);
+        let image = e.native_picture.clone();
+        e.next_picture = Instant::now() + Duration::from_secs(60);
+        let image_deadline = e.next_picture;
+        profile.bands[3] = Rect(0, 0, 1000, 10000);
+        e.profile = Some(profile.clone());
+        let (readings, mut blocked) = profile.regions(100, 100, [2; 4]);
+        blocked[7] = true;
+        e.capture(&frame, bounds, &readings, &blocked);
+        for index in 6..8 {
+            assert_eq!(e.reading_rects[index].0, profile.bands[3].0);
+            assert_eq!(e.reading_rects[index].2, profile.bands[3].2);
+            assert_eq!(e.readings[index].x, e.picture.x);
+        }
+        assert!(e.blocked[7]);
+        assert_eq!(e.next_picture, image_deadline);
+        assert_eq!(e.native_picture, image);
+    }
+    #[test]
+    fn delete_key_removes_only_selected_exclusion_and_supports_undo() {
+        fn press_delete(e: &mut Editor) {
+            use eframe::egui;
+            let ctx = egui::Context::default();
+            let mut canvas = crate::gui::Canvas::default();
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Delete,
+                        physical_key: Some(egui::Key::Delete),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .show(ctx, |ui| e.modern_ui(ui, &mut canvas, &[], false));
+                },
+            );
+        }
+        let mut profile = Profile::preset(1000, 500, 50, 0, false);
+        profile.exclusions = vec![Rect(2000, 2000, 4000, 4000), Rect(5000, 5000, 7000, 7000)];
+        let mut e = Editor {
+            profile: Some(profile.clone()),
+            selected: 5,
+            open: true,
+            ..Default::default()
+        };
+        press_delete(&mut e);
+        assert_eq!(e.profile, Some(profile.clone()));
+        e.adding = true;
+        e.reset_pending = true;
+        press_delete(&mut e);
+        assert_eq!(e.profile, Some(profile.clone()));
+        e.reset_pending = false;
+        press_delete(&mut e);
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions,
+            vec![profile.exclusions[0]]
+        );
+        assert!(e.toolbar_selected(5));
+        press_delete(&mut e); // No selection: another press does nothing.
+        assert_eq!(e.profile.as_ref().unwrap().exclusions.len(), 1);
+        e.undo();
+        assert_eq!(e.profile, Some(profile));
+    }
+    #[test]
+    fn delete_requires_a_selected_exclusion_or_adjusted_reading() {
+        let mut e = Editor::default();
+        let mut profile = Profile::preset(3440, 1440, 120, 0, false);
+        profile.exclusions.push(Rect(100, 100, 200, 200));
+        profile.parts.insert(0, Rect(100, 100, 200, 200));
+        e.profile = Some(profile);
+        assert!(!e.can_delete());
+        e.selected = 4;
+        assert!(!e.can_delete());
+        e.adding = true;
+        assert!(e.can_delete());
+        e.adding = false;
+        e.selected = 5;
+        assert!(!e.can_delete());
+        e.parts = true;
+        assert!(!e.can_delete());
+        e.part = Some(0);
+        assert!(e.can_delete());
+        e.part = Some(1);
+        assert!(!e.can_delete());
+    }
+    #[test]
+    fn hints_do_not_change_preview_size() {
+        let ctx = eframe::egui::Context::default();
+        crate::gui::theme(&ctx);
+        let mut e = Editor::default();
+        let mut canvas = crate::gui::Canvas::default();
+        let mut sizes = Vec::new();
+        for mode in 0..4 {
+            e.parts = mode == 1;
+            e.adding = mode == 2;
+            e.blocked = vec![mode == 3];
+            let _ = ctx.run(
+                eframe::egui::RawInput {
+                    screen_rect: Some(eframe::egui::Rect::from_min_size(
+                        eframe::egui::Pos2::ZERO,
+                        eframe::egui::vec2(1200.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    eframe::egui::CentralPanel::default()
+                        .show(ctx, |ui| e.modern_ui(ui, &mut canvas, &[], false));
+                },
+            );
+            sizes.push(e.view_size);
+        }
+        assert!(sizes.iter().all(|size| *size == sizes[0]), "{sizes:?}");
+    }
+    #[test]
+    fn reset_confirmation_cancel_preserves_layout_and_confirm_is_undoable() {
+        let mut e = selected_part_fixture();
+        e.set_preset(Profile::preset(100, 100, 10, 20, true));
+        e.profile
+            .as_mut()
+            .unwrap()
+            .exclusions
+            .push(Rect(1000, 1000, 2000, 2000));
+        let original = e.profile.clone();
+        e.reset_pending = true;
+        e.resolve_reset(false);
+        assert_eq!(e.profile, original);
+        assert!(!e.dirty && e.undo_history.is_empty());
+        e.reset_pending = true;
+        e.resolve_reset(true);
+        assert!(!e.reset_pending);
+        assert!(e.profile.as_ref().unwrap().exclusions.is_empty());
+        assert!(e.profile.as_ref().unwrap().parts.is_empty());
+        assert_eq!(e.profile.as_ref().unwrap().bands[2].3, 10000);
+        assert!(e.dirty);
+        e.undo();
+        assert_eq!(e.profile, original);
+    }
+    fn selected_part_fixture() -> Editor {
+        let mut profile = Profile::preset(100, 100, 10, 0, false);
+        profile.parts.insert(0, Rect(2000, 2000, 4000, 4000));
+        Editor {
+            open: true,
+            parts: true,
+            part: Some(0),
+            profile: Some(profile),
+            picture: Region {
+                x: 100,
+                y: 100,
+                width: 100,
+                height: 100,
+            },
+            readings: vec![Region {
+                x: 120,
+                y: 120,
+                width: 20,
+                height: 20,
+            }],
+            part_handle_half: (4.0, 4.0),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn dragging_selected_cell_near_corner_moves_without_resizing() {
+        let mut e = selected_part_fixture();
+        e.input(Some((134.0, 134.0)), true); // Within the old resize hotspot, outside the yellow square.
+        assert!(matches!(e.drag, Some(Drag::Move(..))));
+        e.input(Some((137.0, 136.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().parts[&0],
+            Rect(2300, 2200, 4300, 4200)
+        );
+        e.undo();
+        assert_eq!(
+            e.profile.as_ref().unwrap().parts[&0],
+            Rect(2000, 2000, 4000, 4000)
+        );
+    }
+    #[test]
+    fn selected_cell_resizes_only_from_visible_yellow_square() {
+        let mut e = selected_part_fixture();
+        e.input(Some((142.0, 142.0)), true); // Visible square extends beyond the cell itself.
+        assert!(matches!(e.drag, Some(Drag::Resize(..))));
+        e.input(Some((145.0, 146.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().parts[&0],
+            Rect(2000, 2000, 4500, 4600)
+        );
+    }
+    #[test]
+    fn exclusion_mode_highlights_only_exclude_area() {
+        for edge in [0, 3] {
+            let mut e = Editor {
+                open: true,
+                selected: edge,
+                ..Default::default()
+            };
+            e.set_preset(Profile::preset(1000, 500, 50, 0, false));
+            e.input(Some((505.0, 70.0)), true);
+            e.input(None, false);
+            assert!(e.toolbar_selected(5));
+            for index in 0..5 {
+                assert!(!e.toolbar_selected(index));
+            }
+            e.input(Some((45.0 + edge as f32 * 92.0, 70.0)), true);
+            e.input(None, false);
+            assert!(e.toolbar_selected(edge));
+            assert!(!e.toolbar_selected(5));
+        }
+    }
     #[test]
     fn undo_groups_drag_updates_and_restores_resize_then_move() {
         let mut e = Editor {
@@ -760,6 +1334,7 @@ mod tests {
         e.input(None, false);
         assert!(e.undo_history.is_empty());
         e.selected = 4;
+        e.adding = true;
         e.input(Some((620.0, 70.0)), true);
         e.input(None, false);
         assert_eq!(
@@ -1055,7 +1630,7 @@ mod tests {
         e.input(None, false);
         assert_eq!(e.selected, 0);
         assert!(e.profile.as_ref().unwrap().bands[0].3 > 1000);
-        // Selecting Right lets its interior move even inside objectives masks.
+        // In Right mode, the band still moves through an overlapping exclusion.
         e.input(Some((150.0, 70.0)), true);
         e.input(None, false);
         e.input(Some((752.0, 210.0)), true);
@@ -1063,6 +1638,53 @@ mod tests {
         e.input(None, false);
         assert_eq!(e.selected, 1);
         assert!(e.profile.as_ref().unwrap().bands[1].0 < 9500);
+    }
+    #[test]
+    fn exclusion_interior_selects_topmost_and_can_move_and_delete() {
+        let mut profile = Profile::preset(1000, 500, 50, 0, false);
+        profile.exclusions = vec![Rect(2000, 2000, 8000, 8000), Rect(3000, 3000, 7000, 7000)];
+        let mut e = Editor {
+            open: true,
+            profile: Some(profile.clone()),
+            ..Default::default()
+        };
+        // Neither the interior nor the border selects exclusions in band mode.
+        for point in [(400.0, 223.0), (252.0, 223.0)] {
+            e.input(Some(point), true);
+            e.input(None, false);
+            assert_eq!(e.selected, 0);
+            assert!(!e.can_delete());
+        }
+        e.input(Some((510.0, 70.0)), true);
+        e.input(None, false);
+        assert!(e.toolbar_selected(5));
+        assert!(!e.can_delete());
+        e.input(Some((400.0, 223.0)), true);
+        e.input(None, false);
+        assert_eq!(e.selected, 5);
+        assert!(e.toolbar_selected(5));
+        assert!(e.can_delete());
+        assert_eq!(e.profile, Some(profile.clone()));
+        assert!(e.undo_history.is_empty());
+        e.input(Some((400.0, 223.0)), true);
+        e.input(Some((437.0, 223.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions[1],
+            Rect(3500, 3000, 7500, 7000)
+        );
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions[0],
+            profile.exclusions[0]
+        );
+        e.input(Some((620.0, 70.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions,
+            vec![profile.exclusions[0]]
+        );
+        assert!(e.toolbar_selected(5));
+        assert!(!e.can_delete());
     }
     #[test]
     #[ignore = "requires supplied 3439x1439 WoW screenshot as BACKLIGHT_EDITOR_BGRA"]

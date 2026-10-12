@@ -1,5 +1,40 @@
 # Validation performed
 
+## Reset confirmation — 12 October 2026
+
+The modern sampling toolbar opens a confirmation modal before Reset. While the
+modal is open, canvas edits and undo are blocked. Cancel preserves the layout;
+confirmation performs the existing Reset action and keeps it undoable.
+Passed 101 regular tests, formatting and release build. A regression test checks
+Cancel, confirmed clean sampling and undo restoration.
+
+## Individual reading move/resize hit area — 12 October 2026
+
+The selected reading's resize hit area now matches the visible yellow square,
+including its size after canvas scaling. Body clicks outside that square move
+the reading. Whole-section and exclusion handle behavior remains unchanged.
+Passed 100 regular tests, formatting, all-target Clippy and release build.
+Regression tests cover body clicks inside the former oversized hotspot, preserved
+dimensions when moving, resizing from the visible square and undo restoration.
+
+## Modern UI branch — 11 October 2026
+
+Branch `ui-modern-overhaul` replaces the minifb/bitmap production interface with
+egui/eframe (OpenGL) and a dedicated Windows UI event thread. Screen capture,
+colour transforms, adaptive brightness, smoothing, DDP, physical mapping and
+configuration formats remain unchanged. The sampling canvas uses the existing
+drag/resize/exclusion/Reset/undo actions; profiles and Setup keep their existing
+models and engine commands. Legacy bitmap rendering is retained only in tests.
+
+Passed 97 regular tests, formatting and all-target Clippy. Additional checks cover
+pending control changes across engine repaint and rendering without mutation of
+lighting settings. An ignored offline renderer generated all seven setup pages,
+lighting, sampling, profile selection, creation and deletion for visual review;
+it opens no native window and sends no lighting packets. The review used a supplied
+game screenshot through BACKLIGHT_GUI_IMAGE and read the saved profile without
+modifying it. Native OpenGL startup, screenshots, minimize/restore and interactive
+controls need a live check; no native app or game process was controlled here.
+
 ## Profile dropdown — 11 October 2026
 
 Replaced Previous/Next with a dropdown, marked the active profile (current),

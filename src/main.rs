@@ -7,6 +7,7 @@ mod colour;
 mod controls;
 mod ddp;
 mod editor;
+mod gui;
 mod layout;
 mod output;
 mod preferences;
@@ -358,6 +359,7 @@ fn run() -> Result<()> {
         profiles::remember(profile_dir, &active_profile)?;
     }
     if let Some(p) = &mut preview {
+        let mut p = p.lock();
         p.editor.profile = custom_layout.clone();
         p.profiles.active = active_profile.clone();
         p.profiles.names = profiles::names(profile_dir)?;
@@ -385,6 +387,7 @@ fn run() -> Result<()> {
             break;
         }
         if let Some(p) = &mut preview {
+            let mut p = p.lock();
             let old_settings = settings;
             p.interact(&mut settings);
             if let Some(candidate) = p.setup.apply.take() {
@@ -554,20 +557,22 @@ fn run() -> Result<()> {
             eprintln!("{e:#}");
             settings_warning = format!(" — settings warning: {e}");
         }
-        if let Some(p) = &mut preview
-            && p.setup.open
-        {
-            p.setup.tick();
-            p.draw(&preview_colours, &status, settings, effective_brightness)?;
-            std::thread::sleep(Duration::from_millis(16));
-            // Calibration replaces normal lighting only while Setup is open.
-            last = Instant::now();
-            next_update = last;
-            continue;
+        if let Some(p) = &mut preview {
+            let mut view = p.lock();
+            if view.setup.open {
+                view.setup.tick();
+                view.draw(&preview_colours, &status, settings, effective_brightness)?;
+                drop(view);
+                std::thread::sleep(Duration::from_millis(16));
+                last = Instant::now();
+                next_update = last;
+                continue;
+            }
         }
         // Service mouse/window events at least 60 Hz even with a slow LED rate.
         if start < next_update {
             if let Some(p) = &mut preview {
+                let mut p = p.lock();
                 p.draw(
                     &preview_colours,
                     &format!("{status}{settings_warning}"),
@@ -652,6 +657,7 @@ fn run() -> Result<()> {
             );
             if sampling_key.as_ref() != Some(&key) {
                 if let Some(p) = &mut preview {
+                    let mut p = p.lock();
                     p.editor.set_preset(sampling::Profile::preset(
                         bounds.width,
                         bounds.height,
@@ -704,6 +710,7 @@ fn run() -> Result<()> {
                 sampling_key = Some(key);
             }
             if let Some(p) = &mut preview {
+                let mut p = p.lock();
                 p.editor
                     .capture(frame, bounds, &sample_regions, &blocked_regions);
             }
@@ -806,6 +813,7 @@ fn run() -> Result<()> {
             sender.send(&physical)?;
         }
         if let Some(p) = &mut preview {
+            let mut p = p.lock();
             preview_colours = colour::preview_output(&colours, gamma);
             p.draw(
                 &preview_colours,
@@ -826,10 +834,13 @@ fn run() -> Result<()> {
     }
     if !config.no_saved_settings
         && let Some(p) = &preview
-        && p.editor.dirty
-        && let Err(e) = sampling::save_optional(&layout_path, p.editor.profile.as_ref())
     {
-        eprintln!("Cannot save layout on exit: {e}");
+        let view = p.lock();
+        if view.editor.dirty
+            && let Err(e) = sampling::save_optional(&layout_path, view.editor.profile.as_ref())
+        {
+            eprintln!("Cannot save layout on exit: {e}");
+        }
     }
     if let Some(store) = &mut preferences
         && let Err(e) = store.flush(true)
