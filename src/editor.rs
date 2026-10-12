@@ -135,6 +135,16 @@ impl Editor {
         if !self.reset_pending && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
             self.undo();
         }
+        if ui.is_enabled()
+            && !self.reset_pending
+            && self.adding
+            && self.can_delete()
+            && ui.input(|i| i.key_pressed(egui::Key::Delete))
+        {
+            self.input(None, false);
+            self.input(Some((620.0, 70.0)), true);
+            self.input(None, false);
+        }
         ui.horizontal_wrapped(|ui| {
             for (index, label) in [
                 "Top",
@@ -1033,6 +1043,59 @@ fn outline(buffer: &mut [u32], r: Region, colour: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn delete_key_removes_only_selected_exclusion_and_supports_undo() {
+        fn press_delete(e: &mut Editor) {
+            use eframe::egui;
+            let ctx = egui::Context::default();
+            let mut canvas = crate::gui::Canvas::default();
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Delete,
+                        physical_key: Some(egui::Key::Delete),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .show(ctx, |ui| e.modern_ui(ui, &mut canvas, &[], false));
+                },
+            );
+        }
+        let mut profile = Profile::preset(1000, 500, 50, 0, false);
+        profile.exclusions = vec![Rect(2000, 2000, 4000, 4000), Rect(5000, 5000, 7000, 7000)];
+        let mut e = Editor {
+            profile: Some(profile.clone()),
+            selected: 5,
+            open: true,
+            ..Default::default()
+        };
+        press_delete(&mut e);
+        assert_eq!(e.profile, Some(profile.clone()));
+        e.adding = true;
+        e.reset_pending = true;
+        press_delete(&mut e);
+        assert_eq!(e.profile, Some(profile.clone()));
+        e.reset_pending = false;
+        press_delete(&mut e);
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions,
+            vec![profile.exclusions[0]]
+        );
+        assert!(e.toolbar_selected(5));
+        press_delete(&mut e); // No selection: another press does nothing.
+        assert_eq!(e.profile.as_ref().unwrap().exclusions.len(), 1);
+        e.undo();
+        assert_eq!(e.profile, Some(profile));
+    }
     #[test]
     fn delete_requires_a_selected_exclusion_or_adjusted_reading() {
         let mut e = Editor::default();
