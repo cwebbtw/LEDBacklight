@@ -104,11 +104,7 @@ impl Editor {
             .into_iter()
             .enumerate()
             {
-                let selected = if index < 4 {
-                    !self.parts && self.selected == index
-                } else {
-                    index == 4 && self.parts
-                };
+                let selected = self.toolbar_selected(index);
                 let response = ui.selectable_label(selected, label);
                 if response.clicked() {
                     self.input(Some((45.0 + index as f32 * 92.0, 70.0)), true);
@@ -303,6 +299,14 @@ impl Editor {
             } else {
                 egui::CursorIcon::Default
             });
+        }
+    }
+    fn toolbar_selected(&self, index: usize) -> bool {
+        match index {
+            0..=3 => !self.adding && !self.parts && self.selected == index,
+            4 => !self.adding && self.parts,
+            5 => self.adding,
+            _ => false,
         }
     }
     pub fn set_preset(&mut self, p: Profile) {
@@ -947,6 +951,27 @@ fn outline(buffer: &mut [u32], r: Region, colour: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn exclusion_mode_highlights_only_exclude_area() {
+        for edge in [0, 3] {
+            let mut e = Editor {
+                open: true,
+                selected: edge,
+                ..Default::default()
+            };
+            e.set_preset(Profile::preset(1000, 500, 50, 0, false));
+            e.input(Some((505.0, 70.0)), true);
+            e.input(None, false);
+            assert!(e.toolbar_selected(5));
+            for index in 0..5 {
+                assert!(!e.toolbar_selected(index));
+            }
+            e.input(Some((45.0 + edge as f32 * 92.0, 70.0)), true);
+            e.input(None, false);
+            assert!(e.toolbar_selected(edge));
+            assert!(!e.toolbar_selected(5));
+        }
+    }
     #[test]
     fn undo_groups_drag_updates_and_restores_resize_then_move() {
         let mut e = Editor {
