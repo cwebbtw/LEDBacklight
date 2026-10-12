@@ -715,10 +715,6 @@ impl Editor {
         if !self.open {
             return;
         }
-        if Instant::now() < self.next_picture {
-            return;
-        }
-        self.next_picture = Instant::now() + Duration::from_millis(50);
         let scale = (740.0 / bounds.width as f64).min(230.0 / bounds.height as f64);
         let w = (bounds.width as f64 * scale).round().max(1.0) as usize;
         let h = (bounds.height as f64 * scale).round().max(1.0) as usize;
@@ -728,6 +724,12 @@ impl Editor {
             width: w,
             height: h,
         };
+        self.update_readings(bounds, readings, blocked);
+        // Geometry must follow edits immediately; only image resampling is throttled.
+        if Instant::now() < self.next_picture {
+            return;
+        }
+        self.next_picture = Instant::now() + Duration::from_millis(50);
         let view = crate::output::content_rect(self.view_size.0, self.view_size.1);
         let nw = (w * view.width / 800).max(1);
         let nh = (h * view.height / 400).max(1);
@@ -753,6 +755,9 @@ impl Editor {
                         | u32::from(frame.data[i]);
             }
         }
+    }
+    fn update_readings(&mut self, bounds: Region, readings: &[Region], blocked: &[bool]) {
+        let (w, h) = (self.picture.width, self.picture.height);
         self.readings = readings
             .iter()
             .map(|r| Region {
@@ -1043,6 +1048,46 @@ fn outline(buffer: &mut [u32], r: Region, colour: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reading_geometry_tracks_edge_changes_between_image_refreshes() {
+        let frame = Frame {
+            width: 100,
+            height: 100,
+            pitch: 400,
+            data: vec![0; 40000],
+        };
+        let bounds = Region {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+        let mut e = Editor {
+            open: true,
+            ..Default::default()
+        };
+        let mut profile = Profile::preset(100, 100, 10, 0, false);
+        profile.bands[3] = Rect(500, 0, 1500, 10000);
+        let (readings, blocked) = profile.regions(100, 100, [2; 4]);
+        e.capture(&frame, bounds, &readings, &blocked);
+        assert_eq!(e.reading_rects[6].0, 500);
+        let image = e.native_picture.clone();
+        e.next_picture = Instant::now() + Duration::from_secs(60);
+        let image_deadline = e.next_picture;
+        profile.bands[3] = Rect(0, 0, 1000, 10000);
+        e.profile = Some(profile.clone());
+        let (readings, mut blocked) = profile.regions(100, 100, [2; 4]);
+        blocked[7] = true;
+        e.capture(&frame, bounds, &readings, &blocked);
+        for index in 6..8 {
+            assert_eq!(e.reading_rects[index].0, profile.bands[3].0);
+            assert_eq!(e.reading_rects[index].2, profile.bands[3].2);
+            assert_eq!(e.readings[index].x, e.picture.x);
+        }
+        assert!(e.blocked[7]);
+        assert_eq!(e.next_picture, image_deadline);
+        assert_eq!(e.native_picture, image);
+    }
     #[test]
     fn delete_key_removes_only_selected_exclusion_and_supports_undo() {
         fn press_delete(e: &mut Editor) {
