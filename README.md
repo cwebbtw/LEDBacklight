@@ -51,6 +51,7 @@ so enlarging the window reveals more detail rather than stretching the small
 thumbnail. Geometry outlines are redrawn over that detailed picture. Larger corner handles make resizing boxes easier to grab.
 To move just one reading, enable **Individual LEDs**, click a small white reading box,
 then drag it. The selected part turns yellow, with a bottom-right resize handle.
+Only dragging the solid yellow square resizes the reading; dragging its body moves it.
 Its edge and part number appear below the picture. **Delete** restores that part
 to its section's default position; selecting an edge returns to whole-section
 editing. Individual overrides are remembered and stay attached to the same LED

@@ -1,5 +1,14 @@
 # Validation performed
 
+## Individual reading move/resize hit area — 12 October 2026
+
+The selected reading's resize hit area now matches the visible yellow square,
+including its size after canvas scaling. Body clicks outside that square move
+the reading. Whole-section and exclusion handle behavior remains unchanged.
+Passed 100 regular tests, formatting, all-target Clippy and release build.
+Regression tests cover body clicks inside the former oversized hotspot, preserved
+dimensions when moving, resizing from the visible square and undo restoration.
+
 ## Modern UI branch — 11 October 2026
 
 Branch `ui-modern-overhaul` replaces the minifb/bitmap production interface with

@@ -38,6 +38,7 @@ pub struct Editor {
     pub view_size: (usize, usize),
     native_picture: Vec<u32>,
     native_size: (usize, usize),
+    part_handle_half: (f32, f32),
 }
 impl Default for Editor {
     fn default() -> Self {
@@ -69,6 +70,7 @@ impl Default for Editor {
             view_size: (1600, 800),
             native_picture: vec![],
             native_size: (0, 0),
+            part_handle_half: (8.0, 8.0),
         }
     }
 }
@@ -156,6 +158,11 @@ impl Editor {
             egui::vec2(bounds.width(), bounds.width() / aspect)
         };
         let picture = egui::Rect::from_center_size(bounds.center(), size);
+        let part_handle_size = (8.0 * picture.width() / self.picture.width as f32).max(10.0);
+        self.part_handle_half = (
+            part_handle_size * self.picture.width as f32 / (2.0 * picture.width()),
+            part_handle_size * self.picture.height as f32 / (2.0 * picture.height()),
+        );
         let ppp = ui.ctx().pixels_per_point();
         self.view_size = (
             (picture.width() * ppp * 800.0 / self.picture.width as f32) as usize,
@@ -273,9 +280,11 @@ impl Editor {
                 Stroke::new(2.0_f32, Color32::YELLOW),
                 StrokeKind::Inside,
             );
-            let size = (8.0 * picture.width() / self.picture.width as f32).max(10.0);
             ui.painter().rect_filled(
-                egui::Rect::from_center_size(rect.right_bottom(), egui::vec2(size, size)),
+                egui::Rect::from_center_size(
+                    rect.right_bottom(),
+                    egui::vec2(part_handle_size, part_handle_size),
+                ),
                 2.0,
                 Color32::YELLOW,
             );
@@ -308,6 +317,13 @@ impl Editor {
             5 => self.adding,
             _ => false,
         }
+    }
+    fn part_handle_hit(&self, nx: f32, ny: f32) -> bool {
+        self.rect().is_some_and(|r| {
+            (nx - r.2 as f32).abs() * self.picture.width as f32 / 10000.0 <= self.part_handle_half.0
+                && (ny - r.3 as f32).abs() * self.picture.height as f32 / 10000.0
+                    <= self.part_handle_half.1
+        })
     }
     pub fn set_preset(&mut self, p: Profile) {
         self.preset = Some(p);
@@ -474,10 +490,14 @@ impl Editor {
         // Clamping here made edge handles unclickable in the surrounding margin.
         let nx = (x - pic.x as f32) / pic.width as f32 * 10000.0;
         let ny = (y - pic.y as f32) / pic.height as f32 * 10000.0;
-        let selected_handle = self.rect().is_some_and(|r| {
-            (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
-        });
+        let selected_handle = if self.parts {
+            self.part_handle_hit(nx, ny)
+        } else {
+            self.rect().is_some_and(|r| {
+                (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
+                    && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
+            })
+        };
         let border = |r| near_border(r, nx, ny, pic);
         let outside_hit = !self.adding
             && (selected_handle
@@ -492,10 +512,7 @@ impl Editor {
                             .any(border))));
         if fresh && (inside || outside_hit) {
             if self.parts {
-                let handle = self.rect().is_some_and(|r| {
-                    (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                        && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
-                });
+                let handle = selected_handle;
                 if !handle {
                     self.part = self.readings.iter().rposition(|r| {
                         x >= r.x as f32
@@ -505,11 +522,9 @@ impl Editor {
                     });
                 }
                 if let Some(r) = self.rect() {
-                    let near = (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                        && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0;
                     // First click selects/moves a part; only an already-selected
                     // handle resizes, so narrow neighbouring boxes stay selectable.
-                    self.drag = Some(if handle && near {
+                    self.drag = Some(if handle {
                         Drag::Resize(r)
                     } else {
                         Drag::Move(r, nx, ny)
@@ -951,6 +966,59 @@ fn outline(buffer: &mut [u32], r: Region, colour: u32) {
 
 #[cfg(test)]
 mod tests {
+    fn selected_part_fixture() -> Editor {
+        let mut profile = Profile::preset(100, 100, 10, 0, false);
+        profile.parts.insert(0, Rect(2000, 2000, 4000, 4000));
+        Editor {
+            open: true,
+            parts: true,
+            part: Some(0),
+            profile: Some(profile),
+            picture: Region {
+                x: 100,
+                y: 100,
+                width: 100,
+                height: 100,
+            },
+            readings: vec![Region {
+                x: 120,
+                y: 120,
+                width: 20,
+                height: 20,
+            }],
+            part_handle_half: (4.0, 4.0),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn dragging_selected_cell_near_corner_moves_without_resizing() {
+        let mut e = selected_part_fixture();
+        e.input(Some((134.0, 134.0)), true); // Within the old resize hotspot, outside the yellow square.
+        assert!(matches!(e.drag, Some(Drag::Move(..))));
+        e.input(Some((137.0, 136.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().parts[&0],
+            Rect(2300, 2200, 4300, 4200)
+        );
+        e.undo();
+        assert_eq!(
+            e.profile.as_ref().unwrap().parts[&0],
+            Rect(2000, 2000, 4000, 4000)
+        );
+    }
+    #[test]
+    fn selected_cell_resizes_only_from_visible_yellow_square() {
+        let mut e = selected_part_fixture();
+        e.input(Some((142.0, 142.0)), true); // Visible square extends beyond the cell itself.
+        assert!(matches!(e.drag, Some(Drag::Resize(..))));
+        e.input(Some((145.0, 146.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().parts[&0],
+            Rect(2000, 2000, 4500, 4600)
+        );
+    }
     #[test]
     fn exclusion_mode_highlights_only_exclude_area() {
         for edge in [0, 3] {
