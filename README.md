@@ -95,7 +95,7 @@ Backlight appears in Print Screen and other screenshots. Its visible window
 rectangle is temporarily excluded from LED readings to prevent preview feedback;
 move it to another monitor for unobstructed readings and editor pictures.
 Win+D/minimizing hides the window while capture and LED updates continue. Restore
-it from the taskbar or with Win+D. Escape quits only while Backlight has focus.
+it from the taskbar or with Win+D. Escape leaves Backlight running.
 This uses Backlight's own window handle only. It uses desktop
 pixels, with no game memory access, injection, game inputs or game-process control.
 
@@ -206,7 +206,7 @@ the achieved sender update rate, not just the configured target. Smoothing is a
 time constant, not a fixed delay; it takes about three time constants to reach
 95% of a colour change. It can be disabled entirely with `--smoothing-ms 0`.
 
-The preview displays individual output-colour segments around a dark centre; Escape or closing
+The preview displays individual output-colour segments around a dark centre; closing
 the window exits. Headless mode exits with Ctrl+C. Debug output emits one line per
 update, space-separated `R,G,B` triples in clockwise order: top left-to-right,
 right top-to-bottom, bottom right-to-left, left bottom-to-top. Corners intentionally

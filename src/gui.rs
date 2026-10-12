@@ -43,11 +43,6 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
-        if ctx.input(|i| i.viewport().focused.unwrap_or(false) && i.key_pressed(egui::Key::Escape))
-        {
-            view.alive = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
         screen(ctx, &mut view, &mut self.canvas);
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
