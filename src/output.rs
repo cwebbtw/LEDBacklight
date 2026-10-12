@@ -126,6 +126,7 @@ impl Preview {
     ) -> Option<crate::layout::Region> {
         use windows::Win32::{
             Foundation::{HWND, RECT},
+            Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
             UI::WindowsAndMessaging::*,
         };
         let raw = self.lock().hwnd;
@@ -135,9 +136,20 @@ impl Preview {
         let hwnd = HWND(raw as *mut core::ffi::c_void);
         let mut rect = RECT::default();
         unsafe {
-            if IsIconic(hwnd).as_bool()
-                || !IsWindowVisible(hwnd).as_bool()
-                || GetWindowRect(hwnd, &mut rect).is_err()
+            if IsIconic(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() {
+                return None;
+            }
+            // GetWindowRect includes invisible resize borders. On an adjacent
+            // monitor those can overlap this screen and shift every edge reading.
+            // DWM reports the visible frame in physical screen pixels instead.
+            if DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                (&mut rect as *mut RECT).cast(),
+                std::mem::size_of::<RECT>() as u32,
+            )
+            .is_err()
+                && GetWindowRect(hwnd, &mut rect).is_err()
             {
                 return None;
             }
@@ -234,6 +246,52 @@ pub fn debug(colours: &[Rgb]) {
 
 #[cfg(test)]
 mod sizing_tests {
+    #[test]
+    fn adjacent_preview_resize_border_must_not_shift_left_readings() {
+        use crate::{layout::Region, sampling::Profile};
+        use windows::Win32::Foundation::RECT;
+        let bounds = Region {
+            x: 0,
+            y: 0,
+            width: 3440,
+            height: 1440,
+        };
+        // The visible window ends on the neighbouring monitor. Its invisible
+        // resize border extends eight pixels onto the sampled monitor.
+        let outer = RECT {
+            left: -1928,
+            top: -8,
+            right: 8,
+            bottom: 1448,
+        };
+        let visible = RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1440,
+        };
+        let profile = Profile::preset(3440, 1440, 60, 0, false);
+        let counts = crate::strip::COUNTS;
+        let left_start = counts[0] + counts[1] + counts[2];
+        let wrong_zone = crate::taskbar::clipped(outer, (0, 0), bounds, true).unwrap();
+        let wrong = profile
+            .regions_with_zones(3440, 1440, counts, &[wrong_zone])
+            .0;
+        assert!(wrong[left_start..].iter().all(|r| r.x == 8));
+        let zones: Vec<_> = crate::taskbar::clipped(visible, (0, 0), bounds, true)
+            .into_iter()
+            .collect();
+        let corrected = profile.regions_with_zones(3440, 1440, counts, &zones).0;
+        assert!(corrected[left_start..].iter().all(|r| r.x == 0));
+        // A genuinely visible overlap still excludes that part of the screen.
+        let overlap = RECT {
+            right: 16,
+            ..visible
+        };
+        let zone = crate::taskbar::clipped(overlap, (0, 0), bounds, true).unwrap();
+        let readings = profile.regions_with_zones(3440, 1440, counts, &[zone]).0;
+        assert!(readings[left_start..].iter().all(|r| r.x == 16));
+    }
     use super::*;
     #[test]
     fn minimize_suspends_rendering_until_restored() {
