@@ -1,5 +1,13 @@
 # Validation performed
 
+## Reset confirmation — 12 October 2026
+
+The modern sampling toolbar opens a confirmation modal before Reset. While the
+modal is open, canvas edits and undo are blocked. Cancel preserves the layout;
+confirmation performs the existing Reset action and keeps it undoable.
+Passed 101 regular tests, formatting and release build. A regression test checks
+Cancel, confirmed clean sampling and undo restoration.
+
 ## Individual reading move/resize hit area — 12 October 2026
 
 The selected reading's resize hit area now matches the visible yellow square,

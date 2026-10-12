@@ -71,7 +71,7 @@ If necessary, their depth shrinks while their horizontal span stays unchanged;
 a bottom reading with no clear pixels above it is blocked rather than moved sideways.
 they cannot recover scenery hidden behind the game UI. If a reading cannot fit,
 it shrinks until it fits; an entirely excluded picture produces black output.
-**Reset** clears all exclusions and individual-part overrides, restores the
+**Reset** asks for confirmation before clearing all exclusions and individual-part overrides and restoring the
 standard edge bands, and removes any bottom inset. It saves that clean layout
 within the active profile.
 

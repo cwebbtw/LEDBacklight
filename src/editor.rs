@@ -39,6 +39,7 @@ pub struct Editor {
     native_picture: Vec<u32>,
     native_size: (usize, usize),
     part_handle_half: (f32, f32),
+    reset_pending: bool,
 }
 impl Default for Editor {
     fn default() -> Self {
@@ -71,6 +72,7 @@ impl Default for Editor {
             native_picture: vec![],
             native_size: (0, 0),
             part_handle_half: (8.0, 8.0),
+            reset_pending: false,
         }
     }
 }
@@ -88,8 +90,41 @@ impl Editor {
         colours: &[crate::colour::Rgb],
         raw: bool,
     ) {
+        ui.add_enabled_ui(!self.reset_pending, |ui| {
+            self.modern_content(ui, cache, colours, raw)
+        });
+        if self.reset_pending {
+            eframe::egui::Modal::new(eframe::egui::Id::new("confirm-sampling-reset")).show(ui.ctx(), |ui| {
+                ui.set_width(440.0);
+                ui.heading("Reset sampling?");
+                ui.label("Restore the edge sections and remove all exclusions and individual LED adjustments in this profile.");
+                ui.add_space(20.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() { self.resolve_reset(false); }
+                    ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                        if crate::gui::primary(ui,"Reset sampling").clicked() { self.resolve_reset(true); }
+                    });
+                });
+            });
+        }
+    }
+    fn resolve_reset(&mut self, confirmed: bool) {
+        self.reset_pending = false;
+        if confirmed {
+            self.input(None, false);
+            self.input(Some((689.0, 70.0)), true);
+            self.input(None, false);
+        }
+    }
+    fn modern_content(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        cache: &mut crate::gui::Canvas,
+        colours: &[crate::colour::Rgb],
+        raw: bool,
+    ) {
         use eframe::egui::{self, Color32, Stroke, StrokeKind};
-        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
+        if !self.reset_pending && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
             self.undo();
         }
         ui.horizontal_wrapped(|ui| {
@@ -109,8 +144,12 @@ impl Editor {
                 let selected = self.toolbar_selected(index);
                 let response = ui.selectable_label(selected, label);
                 if response.clicked() {
-                    self.input(Some((45.0 + index as f32 * 92.0, 70.0)), true);
-                    self.input(None, false);
+                    if index == 7 {
+                        self.reset_pending = true;
+                    } else {
+                        self.input(Some((45.0 + index as f32 * 92.0, 70.0)), true);
+                        self.input(None, false);
+                    }
                 }
             }
         });
@@ -301,7 +340,11 @@ impl Editor {
                     + (pos.y - picture.top()) * self.picture.height as f32 / picture.height(),
             )
         });
-        self.input(logical, down && (inside || dragging));
+        if self.reset_pending {
+            self.input(None, false);
+        } else {
+            self.input(logical, down && (inside || dragging));
+        }
         if response.hovered() {
             ui.ctx().set_cursor_icon(if self.adding {
                 egui::CursorIcon::Crosshair
@@ -966,6 +1009,30 @@ fn outline(buffer: &mut [u32], r: Region, colour: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reset_confirmation_cancel_preserves_layout_and_confirm_is_undoable() {
+        let mut e = selected_part_fixture();
+        e.set_preset(Profile::preset(100, 100, 10, 20, true));
+        e.profile
+            .as_mut()
+            .unwrap()
+            .exclusions
+            .push(Rect(1000, 1000, 2000, 2000));
+        let original = e.profile.clone();
+        e.reset_pending = true;
+        e.resolve_reset(false);
+        assert_eq!(e.profile, original);
+        assert!(!e.dirty && e.undo_history.is_empty());
+        e.reset_pending = true;
+        e.resolve_reset(true);
+        assert!(!e.reset_pending);
+        assert!(e.profile.as_ref().unwrap().exclusions.is_empty());
+        assert!(e.profile.as_ref().unwrap().parts.is_empty());
+        assert_eq!(e.profile.as_ref().unwrap().bands[2].3, 10000);
+        assert!(e.dirty);
+        e.undo();
+        assert_eq!(e.profile, original);
+    }
     fn selected_part_fixture() -> Editor {
         let mut profile = Profile::preset(100, 100, 10, 0, false);
         profile.parts.insert(0, Rect(2000, 2000, 4000, 4000));
