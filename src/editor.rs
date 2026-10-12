@@ -94,11 +94,14 @@ impl Editor {
             self.modern_content(ui, cache, colours, raw)
         });
         if self.reset_pending {
-            eframe::egui::Modal::new(eframe::egui::Id::new("confirm-sampling-reset")).show(ui.ctx(), |ui| {
+            eframe::egui::Modal::new(eframe::egui::Id::new("confirm-sampling-reset"))
+                .frame(crate::gui::card().inner_margin(28))
+                .show(ui.ctx(), |ui| {
                 ui.set_width(440.0);
                 ui.heading("Reset sampling?");
+                ui.add_space(12.0);
                 ui.label("Restore the edge sections and remove all exclusions and individual LED adjustments in this profile.");
-                ui.add_space(20.0);
+                ui.add_space(28.0);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() { self.resolve_reset(false); }
                     ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
@@ -115,6 +118,10 @@ impl Editor {
             self.input(Some((689.0, 70.0)), true);
             self.input(None, false);
         }
+    }
+    #[cfg(test)]
+    pub fn preview_reset_dialog(&mut self) {
+        self.reset_pending = true;
     }
     fn modern_content(
         &mut self,
@@ -142,7 +149,10 @@ impl Editor {
             .enumerate()
             {
                 let selected = self.toolbar_selected(index);
-                let response = ui.selectable_label(selected, label);
+                let response = ui.add_enabled(
+                    index != 6 || self.can_delete(),
+                    egui::Button::selectable(selected, label),
+                );
                 if response.clicked() {
                     if index == 7 {
                         self.reset_pending = true;
@@ -153,14 +163,10 @@ impl Editor {
                 }
             }
         });
-        if self.adding {
-            ui.label(
-                eframe::egui::RichText::new("Draw an exclusion over the area to ignore.")
-                    .color(crate::gui::MUTED),
-            );
+        let hint = if self.adding {
+            "Draw an exclusion over the area to ignore.".to_owned()
         } else if self.parts {
-            let label = self
-                .part
+            self.part
                 .map(|index| {
                     let mut offset = 0;
                     for (edge, count) in self.counts.iter().enumerate() {
@@ -175,14 +181,22 @@ impl Editor {
                     }
                     "Select a reading".into()
                 })
-                .unwrap_or_else(|| "Select an individual reading box".into());
-            ui.label(eframe::egui::RichText::new(label).color(crate::gui::MUTED));
+                .unwrap_or_else(|| "Select an individual reading box".into())
         } else if self.blocked.contains(&true) {
-            ui.label(
-                eframe::egui::RichText::new("Fully blocked readings are shown in red.")
-                    .color(crate::gui::MUTED),
-            );
-        }
+            "Fully blocked readings are shown in red.".to_owned()
+        } else {
+            String::new()
+        };
+        // Reserve this row even when empty so mode changes never resize the preview.
+        let (hint_row, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+        ui.painter().text(
+            hint_row.left_center(),
+            egui::Align2::LEFT_CENTER,
+            hint,
+            egui::FontId::proportional(16.0),
+            crate::gui::MUTED,
+        );
         ui.add_space(8.0);
         let available = ui.available_size().max(egui::vec2(100.0, 100.0));
         let (canvas, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
@@ -352,6 +366,21 @@ impl Editor {
                 egui::CursorIcon::Default
             });
         }
+    }
+    fn can_delete(&self) -> bool {
+        if self.adding {
+            return false;
+        }
+        if self.parts {
+            return self.part.is_some_and(|index| {
+                self.current()
+                    .is_some_and(|profile| profile.parts.contains_key(&index))
+            });
+        }
+        self.selected.checked_sub(4).is_some_and(|index| {
+            self.current()
+                .is_some_and(|profile| index < profile.exclusions.len())
+        })
     }
     fn toolbar_selected(&self, index: usize) -> bool {
         match index {
@@ -1009,6 +1038,56 @@ fn outline(buffer: &mut [u32], r: Region, colour: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn delete_requires_a_selected_exclusion_or_adjusted_reading() {
+        let mut e = Editor::default();
+        let mut profile = Profile::preset(3440, 1440, 120, 0, false);
+        profile.exclusions.push(Rect(100, 100, 200, 200));
+        profile.parts.insert(0, Rect(100, 100, 200, 200));
+        e.profile = Some(profile);
+        assert!(!e.can_delete());
+        e.selected = 4;
+        assert!(e.can_delete());
+        e.adding = true;
+        assert!(!e.can_delete());
+        e.adding = false;
+        e.selected = 5;
+        assert!(!e.can_delete());
+        e.parts = true;
+        assert!(!e.can_delete());
+        e.part = Some(0);
+        assert!(e.can_delete());
+        e.part = Some(1);
+        assert!(!e.can_delete());
+    }
+    #[test]
+    fn hints_do_not_change_preview_size() {
+        let ctx = eframe::egui::Context::default();
+        crate::gui::theme(&ctx);
+        let mut e = Editor::default();
+        let mut canvas = crate::gui::Canvas::default();
+        let mut sizes = Vec::new();
+        for mode in 0..4 {
+            e.parts = mode == 1;
+            e.adding = mode == 2;
+            e.blocked = vec![mode == 3];
+            let _ = ctx.run(
+                eframe::egui::RawInput {
+                    screen_rect: Some(eframe::egui::Rect::from_min_size(
+                        eframe::egui::Pos2::ZERO,
+                        eframe::egui::vec2(1200.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    eframe::egui::CentralPanel::default()
+                        .show(ctx, |ui| e.modern_ui(ui, &mut canvas, &[], false));
+                },
+            );
+            sizes.push(e.view_size);
+        }
+        assert!(sizes.iter().all(|size| *size == sizes[0]), "{sizes:?}");
+    }
     #[test]
     fn reset_confirmation_cancel_preserves_layout_and_confirm_is_undoable() {
         let mut e = selected_part_fixture();

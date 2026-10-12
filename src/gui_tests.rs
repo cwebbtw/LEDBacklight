@@ -159,6 +159,14 @@ fn render_modern_screens() {
         );
     }
     render(&ctx, &mut view, &mut canvas, &mut textures, "sampling");
+    view.editor.preview_reset_dialog();
+    render(
+        &ctx,
+        &mut view,
+        &mut canvas,
+        &mut textures,
+        "sampling-reset",
+    );
 }
 fn render(
     ctx: &egui::Context,
