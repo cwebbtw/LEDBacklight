@@ -24,6 +24,7 @@ pub struct Editor {
     parts: bool,
     part: Option<usize>,
     pub counts: [usize; 4],
+    // Exclude area mode: selects existing exclusions or draws in empty space.
     adding: bool,
     drag: Option<Drag>,
     was_down: bool,
@@ -164,7 +165,7 @@ impl Editor {
             }
         });
         let hint = if self.adding {
-            "Draw an exclusion over the area to ignore.".to_owned()
+            "Select an exclusion, or drag in empty space to draw one.".to_owned()
         } else if self.parts {
             self.part
                 .map(|index| {
@@ -368,19 +369,17 @@ impl Editor {
         }
     }
     fn can_delete(&self) -> bool {
-        if self.adding {
-            return false;
-        }
         if self.parts {
             return self.part.is_some_and(|index| {
                 self.current()
                     .is_some_and(|profile| profile.parts.contains_key(&index))
             });
         }
-        self.selected.checked_sub(4).is_some_and(|index| {
-            self.current()
-                .is_some_and(|profile| index < profile.exclusions.len())
-        })
+        self.adding
+            && self.selected.checked_sub(4).is_some_and(|index| {
+                self.current()
+                    .is_some_and(|profile| index < profile.exclusions.len())
+            })
     }
     fn toolbar_selected(&self, index: usize) -> bool {
         match index {
@@ -508,12 +507,14 @@ impl Editor {
                     self.parts = !self.parts;
                     self.part = None;
                     self.adding = false;
+                    self.selected = 0;
                     self.drag = None;
                 }
                 5 => {
                     self.parts = false;
                     self.part = None;
                     self.adding = true;
+                    self.selected = usize::MAX;
                 }
                 6 if self.parts && self.part.is_some() => {
                     if let Some(p) = &mut self.profile {
@@ -522,7 +523,7 @@ impl Editor {
                     }
                     self.part = None;
                 }
-                6 if !self.parts && self.selected >= 4 => {
+                6 if !self.parts && self.can_delete() => {
                     if self.profile.is_none() {
                         self.profile = self.preset.clone();
                     }
@@ -530,8 +531,7 @@ impl Editor {
                         p.exclusions.remove(self.selected - 4);
                         self.dirty = true;
                     }
-                    self.selected = 0;
-                    self.adding = false;
+                    self.selected = usize::MAX;
                 }
                 7 => {
                     self.parts = false;
@@ -571,11 +571,11 @@ impl Editor {
             })
         };
         let border = |r| near_border(r, nx, ny, pic);
-        let outside_hit = !self.adding
-            && (selected_handle
-                || (!self.parts
-                    && (self.rect().is_some_and(border)
-                        || self
+        let outside_hit = selected_handle
+            || (!self.parts
+                && (self.rect().is_some_and(border)
+                    || (self.adding
+                        && self
                             .current()
                             .unwrap()
                             .exclusions
@@ -603,28 +603,23 @@ impl Editor {
                     });
                 }
             } else if self.adding {
-                if self.current().unwrap().exclusions.len() < 32 {
+                let hit = self.current().unwrap().exclusions.iter().rposition(|r| {
+                    border(*r)
+                        || (nx >= r.0 as f32
+                            && nx <= r.2 as f32
+                            && ny >= r.1 as f32
+                            && ny <= r.3 as f32)
+                });
+                if selected_handle && let Some(r) = self.rect() {
+                    self.drag = Some(Drag::Resize(r));
+                } else if let Some(index) = hit {
+                    self.selected = index + 4;
+                    self.drag = self.rect().map(|r| Drag::Move(r, nx, ny));
+                } else if inside && self.current().unwrap().exclusions.len() < 32 {
+                    self.selected = usize::MAX;
                     self.drag = Some(Drag::New(nx, ny));
                 }
             } else {
-                // Prefer the selected band's handle even when an exclusion
-                // covers it. Otherwise select exclusions from their borders
-                // or interiors, with the last drawn exclusion taking priority.
-                let handle = self.rect().is_some_and(|r| {
-                    (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
-                        && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
-                });
-                if !handle
-                    && let Some(i) = self.current().unwrap().exclusions.iter().rposition(|r| {
-                        border(*r)
-                            || (nx >= r.0 as f32
-                                && nx <= r.2 as f32
-                                && ny >= r.1 as f32
-                                && ny <= r.3 as f32)
-                    })
-                {
-                    self.selected = i + 4;
-                }
                 if let Some(r) = self.rect() {
                     let near = (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
                         && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0;
@@ -675,7 +670,6 @@ impl Editor {
                     p.exclusions.push(r);
                     self.dirty = true;
                     self.selected = p.exclusions.len() + 3;
-                    self.adding = false;
                     self.drag = Some(Drag::Draw(sx, sy));
                     r
                 }
@@ -1048,9 +1042,9 @@ mod tests {
         e.profile = Some(profile);
         assert!(!e.can_delete());
         e.selected = 4;
-        assert!(e.can_delete());
-        e.adding = true;
         assert!(!e.can_delete());
+        e.adding = true;
+        assert!(e.can_delete());
         e.adding = false;
         e.selected = 5;
         assert!(!e.can_delete());
@@ -1232,6 +1226,7 @@ mod tests {
         e.input(None, false);
         assert!(e.undo_history.is_empty());
         e.selected = 4;
+        e.adding = true;
         e.input(Some((620.0, 70.0)), true);
         e.input(None, false);
         assert_eq!(
@@ -1527,14 +1522,14 @@ mod tests {
         e.input(None, false);
         assert_eq!(e.selected, 0);
         assert!(e.profile.as_ref().unwrap().bands[0].3 > 1000);
-        // Clicking inside an objectives mask selects that exclusion instead.
+        // In Right mode, the band still moves through an overlapping exclusion.
         e.input(Some((150.0, 70.0)), true);
         e.input(None, false);
         e.input(Some((752.0, 210.0)), true);
         e.input(Some((700.0, 210.0)), true);
         e.input(None, false);
-        assert!(e.selected >= 4);
-        assert_eq!(e.profile.as_ref().unwrap().bands[1].0, 9500);
+        assert_eq!(e.selected, 1);
+        assert!(e.profile.as_ref().unwrap().bands[1].0 < 9500);
     }
     #[test]
     fn exclusion_interior_selects_topmost_and_can_move_and_delete() {
@@ -1545,9 +1540,21 @@ mod tests {
             profile: Some(profile.clone()),
             ..Default::default()
         };
+        // Neither the interior nor the border selects exclusions in band mode.
+        for point in [(400.0, 223.0), (252.0, 223.0)] {
+            e.input(Some(point), true);
+            e.input(None, false);
+            assert_eq!(e.selected, 0);
+            assert!(!e.can_delete());
+        }
+        e.input(Some((510.0, 70.0)), true);
+        e.input(None, false);
+        assert!(e.toolbar_selected(5));
+        assert!(!e.can_delete());
         e.input(Some((400.0, 223.0)), true);
         e.input(None, false);
         assert_eq!(e.selected, 5);
+        assert!(e.toolbar_selected(5));
         assert!(e.can_delete());
         assert_eq!(e.profile, Some(profile.clone()));
         assert!(e.undo_history.is_empty());
@@ -1568,6 +1575,8 @@ mod tests {
             e.profile.as_ref().unwrap().exclusions,
             vec![profile.exclusions[0]]
         );
+        assert!(e.toolbar_selected(5));
+        assert!(!e.can_delete());
     }
     #[test]
     #[ignore = "requires supplied 3439x1439 WoW screenshot as BACKLIGHT_EDITOR_BGRA"]
