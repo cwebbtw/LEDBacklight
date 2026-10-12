@@ -64,7 +64,7 @@ relocated around exclusions. The live colour frame remains visible around the
 editor; **Done - lighting** returns to the brightness and timing controls.
 
 Choose **Exclude**, then draw a red box over UI such as buffs, right-hand action
-bars, a map or chat. Click an exclusion's red border to select and move/resize it; **Delete** removes the
+bars, a map or chat. Click inside an exclusion or on its red border to select and move it; use its corner handle to resize it. **Delete** removes the
 selected exclusion. Exclusions move affected readings to nearby clear pixels;
 bottom readings keep their horizontal positions and move straight upwards.
 If necessary, their depth shrinks while their horizontal span stays unchanged;

@@ -608,19 +608,20 @@ impl Editor {
                 }
             } else {
                 // Prefer the selected band's handle even when an exclusion
-                // covers it. Select other exclusions by their red borders,
-                // leaving band interiors draggable through overlapping UI.
+                // covers it. Otherwise select exclusions from their borders
+                // or interiors, with the last drawn exclusion taking priority.
                 let handle = self.rect().is_some_and(|r| {
                     (nx - r.2 as f32).abs() * pic.width as f32 / 10000.0 <= 12.0
                         && (ny - r.3 as f32).abs() * pic.height as f32 / 10000.0 <= 12.0
                 });
                 if !handle
-                    && let Some(i) = self
-                        .current()
-                        .unwrap()
-                        .exclusions
-                        .iter()
-                        .rposition(|r| border(*r))
+                    && let Some(i) = self.current().unwrap().exclusions.iter().rposition(|r| {
+                        border(*r)
+                            || (nx >= r.0 as f32
+                                && nx <= r.2 as f32
+                                && ny >= r.1 as f32
+                                && ny <= r.3 as f32)
+                    })
                 {
                     self.selected = i + 4;
                 }
@@ -1526,14 +1527,47 @@ mod tests {
         e.input(None, false);
         assert_eq!(e.selected, 0);
         assert!(e.profile.as_ref().unwrap().bands[0].3 > 1000);
-        // Selecting Right lets its interior move even inside objectives masks.
+        // Clicking inside an objectives mask selects that exclusion instead.
         e.input(Some((150.0, 70.0)), true);
         e.input(None, false);
         e.input(Some((752.0, 210.0)), true);
         e.input(Some((700.0, 210.0)), true);
         e.input(None, false);
-        assert_eq!(e.selected, 1);
-        assert!(e.profile.as_ref().unwrap().bands[1].0 < 9500);
+        assert!(e.selected >= 4);
+        assert_eq!(e.profile.as_ref().unwrap().bands[1].0, 9500);
+    }
+    #[test]
+    fn exclusion_interior_selects_topmost_and_can_move_and_delete() {
+        let mut profile = Profile::preset(1000, 500, 50, 0, false);
+        profile.exclusions = vec![Rect(2000, 2000, 8000, 8000), Rect(3000, 3000, 7000, 7000)];
+        let mut e = Editor {
+            open: true,
+            profile: Some(profile.clone()),
+            ..Default::default()
+        };
+        e.input(Some((400.0, 223.0)), true);
+        e.input(None, false);
+        assert_eq!(e.selected, 5);
+        assert!(e.can_delete());
+        assert_eq!(e.profile, Some(profile.clone()));
+        assert!(e.undo_history.is_empty());
+        e.input(Some((400.0, 223.0)), true);
+        e.input(Some((437.0, 223.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions[1],
+            Rect(3500, 3000, 7500, 7000)
+        );
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions[0],
+            profile.exclusions[0]
+        );
+        e.input(Some((620.0, 70.0)), true);
+        e.input(None, false);
+        assert_eq!(
+            e.profile.as_ref().unwrap().exclusions,
+            vec![profile.exclusions[0]]
+        );
     }
     #[test]
     #[ignore = "requires supplied 3439x1439 WoW screenshot as BACKLIGHT_EDITOR_BGRA"]
